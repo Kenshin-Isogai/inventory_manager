@@ -139,9 +139,10 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 			}
 		}
 
+		path := r.URL.Path
 		principal, err := s.CurrentPrincipal(r.Context(), bearerToken(r.Header.Get("Authorization")))
 		if err != nil {
-			if s.cfg.Mode == "dry_run" {
+			if s.cfg.Mode == "dry_run" || !requiresAuthenticatedUser(path) {
 				next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), Principal{Authenticated: false, Status: "anonymous"})))
 				return
 			}
@@ -149,12 +150,12 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if s.cfg.Mode == "enforced" && requiresAuthenticatedUser(r.URL.Path) {
+		if s.cfg.Mode == "enforced" && requiresAuthenticatedUser(path) {
 			if !principal.Authenticated {
 				http.Error(w, "authentication required", http.StatusUnauthorized)
 				return
 			}
-			if s.cfg.RequireEmailVerified && !principal.EmailVerified && requiresVerifiedEmail(r.URL.Path) {
+			if s.cfg.RequireEmailVerified && !principal.EmailVerified && requiresVerifiedEmail(path) {
 				http.Error(w, "email verification is required", http.StatusUnauthorized)
 				return
 			}

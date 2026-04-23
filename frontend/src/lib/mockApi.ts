@@ -627,7 +627,20 @@ export async function registerUser(input: RegistrationInput) {
     })
     if (!response.ok) {
       const payload = await response.json().catch(() => null)
-      throw new Error((payload as { error?: string } | null)?.error ?? `request failed: ${response.status}`)
+      const backendError = (payload as { error?: string } | null)?.error
+      if (backendError) {
+        throw new Error(`${backendError} (${response.status})`)
+      }
+      if (response.status === 401) {
+        throw new Error('authentication required (401): check sign-in state, API_BASE_URL, and backend JWT settings')
+      }
+      if (response.status === 403) {
+        throw new Error('active account required (403): the identity exists but is not approved for app access yet')
+      }
+      if (response.status === 404) {
+        throw new Error('registration endpoint not found (404): check API_BASE_URL points to the backend service')
+      }
+      throw new Error(`request failed: ${response.status}`)
     }
     const payload = await response.json()
     return payload.data as AppUserSummary

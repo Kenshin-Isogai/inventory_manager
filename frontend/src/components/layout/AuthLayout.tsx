@@ -1,6 +1,7 @@
 import type { PropsWithChildren } from 'react'
 import { Link } from 'react-router-dom'
 import { Card } from '@/components/ui/card'
+import { EnvironmentNotice } from '@/components/EnvironmentNotice'
 
 type AuthLayoutProps = PropsWithChildren<{
   title?: string
@@ -27,7 +28,7 @@ export function AuthLayout({ title = 'Inventory Manager', subtitle, children }: 
 
         {/* Footer */}
         <div className="text-center text-xs text-muted-foreground">
-          <p>Local mode first. Cloud auth and procurement adapters are staged behind the same shell.</p>
+          <EnvironmentNotice />
         </div>
       </div>
     </div>

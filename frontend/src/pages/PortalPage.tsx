@@ -5,6 +5,7 @@ import { useAuthSession } from '@/hooks/useAuthSession'
 import { useBootstrap } from '@/hooks/useBootstrap'
 import { canAccessApp, defaultPathForApp, localFallbackSession, resolveSessionUser } from '@/lib/auth'
 import { isFirebaseAuthConfigured } from '@/lib/firebaseAuth'
+import { EnvironmentNotice } from '@/components/EnvironmentNotice'
 import { ClipboardList, Package, FileText, Truck, Users } from 'lucide-react'
 import type { AppSection } from '@/types'
 
@@ -111,7 +112,7 @@ export function PortalPage() {
         </div>
 
         <div className="text-center text-sm text-muted-foreground space-y-2 pt-8 border-t">
-          <p>Local mode first. Cloud auth, OCR, and procurement adapters are staged behind the same shell.</p>
+          <EnvironmentNotice />
           <p className="text-xs">
             Current roles: {activeSession.roles.length > 0 ? activeSession.roles.join(', ') : 'no app roles'}
           </p>

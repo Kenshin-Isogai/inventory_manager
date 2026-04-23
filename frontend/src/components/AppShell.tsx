@@ -7,6 +7,7 @@ import { canAccessApp, clearStoredToken, defaultPathForApp, localFallbackSession
 import { isFirebaseAuthConfigured } from '../lib/firebaseAuth'
 import { routes } from '../lib/routes'
 import type { AppSection } from '../types'
+import { EnvironmentNotice } from './EnvironmentNotice'
 
 const apps: AppSection[] = ['operator', 'inventory', 'procurement', 'inspector', 'admin']
 
@@ -41,9 +42,7 @@ export function AppShell() {
         <Link to={defaultPathForApp(activeSession.defaultApp)} className="brand">
           Inventory Manager
         </Link>
-        <p className="sidebar-copy">
-          Local mode first. Cloud auth, OCR, and procurement adapters are staged behind the same shell.
-        </p>
+        <EnvironmentNotice className="sidebar-copy" />
         <nav className="app-nav" aria-label="Applications">
           {apps.map((app) =>
             canAccessApp(activeSession.roles, app) ? (

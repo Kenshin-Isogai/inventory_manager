@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuthSession } from '@/hooks/useAuthSession'
 import { defaultPathForApp } from '@/lib/auth'
+import { isFirebaseAuthConfigured } from '@/lib/firebaseAuth'
 import { registerUser } from '@/lib/mockApi'
 
 export function RegisterPage() {
@@ -17,6 +18,7 @@ export function RegisterPage() {
   const [email, setEmail] = useState<string | null>(null)
   const [displayName, setDisplayName] = useState<string | null>(null)
   const [error, setError] = useState('')
+  const requiresIdentity = isFirebaseAuthConfigured()
   const resolvedEmail = email ?? session?.user.email ?? ''
   const resolvedDisplayName = displayName ?? session?.user.displayName ?? ''
 
@@ -34,6 +36,10 @@ export function RegisterPage() {
             onSubmit={async (event) => {
               event.preventDefault()
               setError('')
+              if (requiresIdentity && !session?.authenticated) {
+                setError('Sign in first. Registration is only available after Identity Platform authentication.')
+                return
+              }
               try {
                 const result = await registerUser({ email: resolvedEmail, displayName: resolvedDisplayName })
                 await mutate('auth-session')
