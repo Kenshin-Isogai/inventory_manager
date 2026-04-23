@@ -3,6 +3,11 @@ name: deploy-cloud-run
 on:
   workflow_dispatch:
     inputs:
+      deploy_environment:
+        description: GitHub Environment to use for deploy secrets and variables
+        required: true
+        default: staging
+        type: environment
       image_tag:
         description: Image tag to publish
         required: false
@@ -31,6 +36,7 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: ${{ inputs.deploy_environment }}
     permissions:
       contents: read
       id-token: write

@@ -6,10 +6,13 @@
 - `backend`: Go API container on Cloud Run
 - `migration job`: Cloud Run Job using the backend image with `/app/migrate up`
 - deploy trigger: manual `workflow_dispatch` only
+- manual deploy requires selecting a GitHub Environment for secrets and variables
 - manual deploy targets: `backend`, `frontend`, `full`
 - deploy guardrail: run backend/frontend verification before image push and deploy
 
-## Required Repository Variables
+## Required Variables
+
+These can be stored as repository-level variables, but the deploy workflow is now designed to read them from the selected GitHub Environment when present.
 
 - `GCP_PROJECT_ID`
 - `GCP_REGION`
@@ -38,7 +41,9 @@ Optional repository variables:
 - `GEMINI_MODEL`
 - `FRONTEND_PUBLIC_URL`
 
-## Required Repository Secrets
+## Required Secrets
+
+These can be stored as repository-level secrets, but the deploy workflow is now designed to read them from the selected GitHub Environment when present.
 
 - `WORKLOAD_IDENTITY_PROVIDER`
 - `WORKLOAD_IDENTITY_SERVICE_ACCOUNT`
@@ -93,7 +98,7 @@ The current workflow passes service accounts explicitly with `--service-account`
 2. add secret versions for `DATABASE_URL_SECRET_NAME` and `PROCUREMENT_WEBHOOK_SECRET`
 3. set the printed GitHub repository variables and secrets
 4. grant runtime SA roles for Cloud SQL / Cloud Storage / Vertex AI as needed
-5. run the deploy workflow once with `deploy_target=backend` or `deploy_target=full`
+5. run the deploy workflow once with `deploy_environment=<your-environment>` and `deploy_target=backend|full`
 6. confirm backend `/health` and `/ready`
 7. confirm frontend root URL
 
