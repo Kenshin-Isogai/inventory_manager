@@ -8,7 +8,15 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { LOCAL_LOGIN_PROFILES, setStoredToken } from '@/lib/auth'
-import { isFirebaseAuthConfigured, signInWithIdentityPlatform, signUpWithIdentityPlatform, sendVerificationEmail } from '@/lib/firebaseAuth'
+import type { AuthSessionResponse } from '@/types'
+import {
+  describeIdentityAuthError,
+  isFirebaseAuthConfigured,
+  sendVerificationEmail,
+  signInWithIdentityPlatform,
+  signUpWithIdentityPlatform,
+  syncStoredTokenFromIdentityPlatform,
+} from '@/lib/firebaseAuth'
 
 export function LoginPage() {
   const navigate = useNavigate()
@@ -21,6 +29,32 @@ export function LoginPage() {
   async function handleLogin(token: string) {
     setStoredToken(token)
     await mutate('auth-session')
+    navigate('/app/portal', { replace: true })
+  }
+
+  async function syncSessionAndNavigate() {
+    await syncStoredTokenFromIdentityPlatform()
+    const session = await mutate('auth-session') as AuthSessionResponse | undefined
+
+    if (!session?.authenticated) {
+      throw new Error('Identity Platform sign-in succeeded, but the backend rejected the token.')
+    }
+    if (!session.user.emailVerified) {
+      navigate('/auth/verify-email', { replace: true })
+      return
+    }
+    if (session.user.status === 'pending') {
+      navigate('/auth/pending', { replace: true })
+      return
+    }
+    if (session.user.status === 'rejected') {
+      navigate('/auth/rejected', { replace: true })
+      return
+    }
+    if (session.user.status === 'unregistered' || session.user.registrationNeeded) {
+      navigate('/auth/register', { replace: true })
+      return
+    }
     navigate('/app/portal', { replace: true })
   }
 
@@ -41,10 +75,14 @@ export function LoginPage() {
                 setError('')
                 try {
                   await signInWithIdentityPlatform(email, password)
-                  await mutate('auth-session')
-                  navigate('/app/portal', { replace: true })
+                  await syncSessionAndNavigate()
                 } catch (caught) {
-                  setError(caught instanceof Error ? caught.message : 'Failed to sign in')
+                  setError(
+                    describeIdentityAuthError(
+                      caught,
+                      'Failed to sign in. If the page jumps back here, backend auth may still be rejecting the token.'
+                    )
+                  )
                 }
               }}
               className="space-y-4"
@@ -82,16 +120,20 @@ export function LoginPage() {
                     try {
                       await signUpWithIdentityPlatform(email, password)
                       await sendVerificationEmail()
+                      await syncStoredTokenFromIdentityPlatform()
                       await mutate('auth-session')
                       navigate('/auth/verify-email', { replace: true })
                     } catch (caught) {
-                      setError(caught instanceof Error ? caught.message : 'Failed to create account')
+                      setError(describeIdentityAuthError(caught, 'Failed to create account'))
                     }
                   }}
                 >
                   Create Account
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground text-center">
+                If this email already exists in Identity Platform, use `Sign In`. Verified identities will continue to app registration automatically.
+              </p>
               {error && <p className="text-sm text-destructive text-center">{error}</p>}
             </form>
           ) : null}

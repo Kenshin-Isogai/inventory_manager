@@ -12,6 +12,7 @@ import {
   type User,
 } from 'firebase/auth'
 
+import { setStoredToken } from './auth'
 import { runtimeConfig } from './runtimeConfig'
 
 let appInstance: FirebaseApp | null = null
@@ -63,6 +64,38 @@ export async function signUpWithIdentityPlatform(email: string, password: string
     throw new Error('Firebase Auth runtime config is not set')
   }
   return createUserWithEmailAndPassword(auth, email, password)
+}
+
+export async function syncStoredTokenFromIdentityPlatform(forceRefresh = false) {
+  const auth = getFirebaseAuth()
+  if (!auth?.currentUser) {
+    throw new Error('No authenticated Identity Platform user')
+  }
+  const token = await auth.currentUser.getIdToken(forceRefresh)
+  setStoredToken(token)
+  return auth.currentUser
+}
+
+export function describeIdentityAuthError(caught: unknown, fallback: string) {
+  const code = typeof caught === 'object' && caught !== null && 'code' in caught
+    ? String((caught as { code?: unknown }).code ?? '')
+    : ''
+
+  switch (code) {
+    case 'auth/email-already-in-use':
+      return 'This email already exists in Identity Platform. Use Sign In instead. If it is already verified, you will be routed to Registration for this app.'
+    case 'auth/invalid-credential':
+    case 'auth/invalid-login-credentials':
+      return 'Email or password is incorrect.'
+    case 'auth/user-disabled':
+      return 'This Identity Platform account is disabled.'
+    case 'auth/too-many-requests':
+      return 'Too many attempts. Wait a bit and try again.'
+    case 'auth/weak-password':
+      return 'Password is too weak.'
+    default:
+      return caught instanceof Error ? caught.message : fallback
+  }
 }
 
 export async function sendVerificationEmail() {
