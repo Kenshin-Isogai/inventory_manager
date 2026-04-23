@@ -42,7 +42,7 @@ export function OperatorDashboardPage() {
               <AlertCircle className="w-5 h-5 text-amber-600" />
               Alerts
             </CardTitle>
-            <CardDescription>Projection-based operational alerts</CardDescription>
+            <CardDescription>Operational alerts that need attention</CardDescription>
           </CardHeader>
           <CardContent>
             <ul className="space-y-2">

@@ -62,15 +62,15 @@ export function ShortagesPage() {
       <div className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight">Shortages</h1>
         <p className="text-muted-foreground">
-          Projection-based shortages {device || scope ? `filtered by Device: ${device}, Scope: ${scope}` : 'for all contexts'}.
+          Shortage summary {device || scope ? `filtered by Device: ${device}, Scope: ${scope}` : 'for all contexts'}.
         </p>
       </div>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div className="space-y-1">
-            <CardTitle>Shortage Projections</CardTitle>
-            <CardDescription>Items with projected stock shortages</CardDescription>
+            <CardTitle>Shortage List</CardTitle>
+            <CardDescription>Items that need replenishment</CardDescription>
           </div>
           <Button
             onClick={() => void handleExport()}
@@ -130,7 +130,7 @@ export function ShortagesPage() {
       <Card>
         <CardHeader>
           <CardTitle>Import History</CardTitle>
-          <CardDescription>CSV import jobs tracked locally for item and alias operations</CardDescription>
+          <CardDescription>Recent item and alias imports</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">

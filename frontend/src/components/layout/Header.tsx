@@ -42,12 +42,16 @@ function ContextControls() {
 
   if (!showContextControls) return null
 
-  const device = searchParams.get('device') ?? 'ER2'
-  const scope = searchParams.get('scope') ?? 'powerboard'
+  const device = searchParams.get('device') ?? ''
+  const scope = searchParams.get('scope') ?? ''
 
   const updateContext = (key: 'device' | 'scope', value: string) => {
     const next = new URLSearchParams(searchParams)
-    next.set(key, value)
+    if (value.trim() === '') {
+      next.delete(key)
+    } else {
+      next.set(key, value)
+    }
     setSearchParams(next, { replace: true })
   }
 
@@ -61,6 +65,7 @@ function ContextControls() {
           id="ctx-device"
           value={device}
           onChange={(e) => updateContext('device', e.target.value)}
+          placeholder="Not selected"
           className="h-8 w-24 text-sm"
         />
       </div>
@@ -72,6 +77,7 @@ function ContextControls() {
           id="ctx-scope"
           value={scope}
           onChange={(e) => updateContext('scope', e.target.value)}
+          placeholder="Not selected"
           className="h-8 w-28 text-sm"
         />
       </div>

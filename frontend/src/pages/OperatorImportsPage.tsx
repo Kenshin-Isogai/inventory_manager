@@ -78,7 +78,7 @@ export function OperatorImportsPage({ mode = 'upload' }: OperatorImportsPageProp
               Upload CSV
             </CardTitle>
             <CardDescription>
-              Operator-facing upload lane for local CSV rehearsal before cloud integration is fixed.
+              Upload CSV files to update master data.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -105,7 +105,7 @@ export function OperatorImportsPage({ mode = 'upload' }: OperatorImportsPageProp
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                Current local implementation reuses the import job pipeline so operators can verify upload, validation, and history wiring.
+                Uploaded files are checked before they are added to import history.
               </p>
             </div>
             {message && (
@@ -120,7 +120,7 @@ export function OperatorImportsPage({ mode = 'upload' }: OperatorImportsPageProp
       <Card>
         <CardHeader>
           <CardTitle>Import History</CardTitle>
-          <CardDescription>Latest import jobs available to operators without leaving the application shell</CardDescription>
+          <CardDescription>Review recent CSV uploads and their results</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">

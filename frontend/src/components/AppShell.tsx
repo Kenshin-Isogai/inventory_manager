@@ -16,8 +16,8 @@ export function AppShell() {
   const { data: bootstrap } = useBootstrap()
   const { data: session } = useAuthSession()
   const { mutate } = useSWRConfig()
-  const device = searchParams.get('device') ?? 'ER2'
-  const scope = searchParams.get('scope') ?? 'powerboard'
+  const device = searchParams.get('device') ?? ''
+  const scope = searchParams.get('scope') ?? ''
   const authMode = bootstrap?.authMode ?? (isFirebaseAuthConfigured() ? 'enforced' : 'none')
   if (authMode !== 'none' && !session?.authenticated) {
     return null
@@ -26,7 +26,11 @@ export function AppShell() {
 
   const updateContext = (key: 'device' | 'scope', value: string) => {
     const next = new URLSearchParams(searchParams)
-    next.set(key, value)
+    if (value.trim() === '') {
+      next.delete(key)
+    } else {
+      next.set(key, value)
+    }
     setSearchParams(next, { replace: true })
   }
 
@@ -71,11 +75,11 @@ export function AppShell() {
           <div className="context-controls">
             <label>
               <span>Device</span>
-              <input value={device} onChange={(event) => updateContext('device', event.target.value)} />
+              <input value={device} placeholder="Not selected" onChange={(event) => updateContext('device', event.target.value)} />
             </label>
             <label>
               <span>Scope</span>
-              <input value={scope} onChange={(event) => updateContext('scope', event.target.value)} />
+              <input value={scope} placeholder="Not selected" onChange={(event) => updateContext('scope', event.target.value)} />
             </label>
           </div>
           <div className="session-card">

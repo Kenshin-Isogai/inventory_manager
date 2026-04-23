@@ -88,7 +88,7 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Admin</h1>
-        <p className="text-muted-foreground mt-1">Configuration and platform management</p>
+        <p className="text-muted-foreground mt-1">Manage users, access, and master data</p>
       </div>
 
       <Tabs defaultValue={initialTab} className="space-y-4">
@@ -103,7 +103,7 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
           <Card>
             <CardHeader>
               <CardTitle>Platform Configuration</CardTitle>
-              <CardDescription>System settings and capabilities</CardDescription>
+              <CardDescription>Current sign-in, storage, and feature settings</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid grid-cols-2 gap-6">
@@ -120,8 +120,8 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
                   <p className="font-medium">{data?.storageMode || '-'}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Project Cache Sync</p>
-                  <p className="font-medium">{latestProjectSync || 'Not synced yet'}</p>
+                  <p className="text-sm text-muted-foreground">Last Project Update</p>
+                  <p className="font-medium">{latestProjectSync || 'No updates yet'}</p>
                 </div>
               </div>
 
@@ -139,7 +139,7 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
               </div>
 
               <Button onClick={() => void handleProjectRefresh()} disabled={refreshingProjects}>
-                {refreshingProjects ? 'Refreshing...' : 'Refresh Procurement Project Cache'}
+                {refreshingProjects ? 'Refreshing...' : 'Refresh Projects'}
               </Button>
             </CardContent>
           </Card>
@@ -333,7 +333,7 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
           <Card>
             <CardHeader>
               <CardTitle>Role Catalog</CardTitle>
-              <CardDescription>Current role-permission matrix for route guards and admin approval</CardDescription>
+              <CardDescription>Available roles and their access scope</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">

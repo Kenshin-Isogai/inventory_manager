@@ -122,7 +122,7 @@ export function ProcurementPage() {
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Procurement Requests</h1>
-        <p className="text-muted-foreground mt-1">Local request list, normalized status, and project context.</p>
+        <p className="text-muted-foreground mt-1">Track requests, projects, and budget categories.</p>
       </div>
 
       <Card>
@@ -185,7 +185,7 @@ export function ProcurementPage() {
                 </div>
                 <div className="space-y-2">
                   <Button type="button" variant="outline" onClick={handleRefreshProjects} disabled={refreshingProjects} className="w-full">
-                    {refreshingProjects ? 'Refreshing...' : 'Refresh Project Cache'}
+                    {refreshingProjects ? 'Refreshing...' : 'Refresh Projects'}
                   </Button>
                   <Button type="button" variant="outline" onClick={handleRefreshBudgets} disabled={refreshingBudgets} className="w-full">
                     {refreshingBudgets ? 'Refreshing...' : 'Refresh Budget Categories'}

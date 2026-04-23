@@ -165,7 +165,7 @@ export function ProcurementRequestDetailPage() {
           onClick={handleDispatch}
           disabled={submitting || detail.dispatchStatus === 'submitted'}
         >
-          {submitting ? 'Submitting...' : detail.dispatchStatus === 'submitted' ? 'Submitted' : 'Submit to External Flow'}
+          {submitting ? 'Submitting...' : detail.dispatchStatus === 'submitted' ? 'Submitted' : 'Submit Request'}
         </Button>
         <Button
           variant="outline"
@@ -183,11 +183,11 @@ export function ProcurementRequestDetailPage() {
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <p className="text-sm text-muted-foreground">Normalized Status</p>
+              <p className="text-sm text-muted-foreground">Current Status</p>
               <p className="font-medium">{detail.normalizedStatus}</p>
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">Raw Status</p>
+              <p className="text-sm text-muted-foreground">Status Detail</p>
               <p className="font-medium">{detail.rawStatus}</p>
             </div>
             <div>
@@ -199,7 +199,7 @@ export function ProcurementRequestDetailPage() {
               <p className="font-medium">{detail.externalRequestReference || 'Not submitted'}</p>
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">Dispatch Attempts</p>
+              <p className="text-sm text-muted-foreground">Submission Attempts</p>
               <p className="font-medium">{detail.dispatchAttempts}</p>
             </div>
             <div>
@@ -207,11 +207,11 @@ export function ProcurementRequestDetailPage() {
               <p className="font-medium">{detail.lastReconciledAt || 'Not yet reconciled'}</p>
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">Sync Source</p>
+              <p className="text-sm text-muted-foreground">Update Source</p>
               <p className="font-medium">{detail.syncSource || 'Not yet synced'}</p>
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">Artifact Cleanup</p>
+              <p className="text-sm text-muted-foreground">File Cleanup</p>
               <p className="font-medium">{detail.artifactDeleteStatus}</p>
             </div>
           </div>
@@ -292,8 +292,8 @@ export function ProcurementRequestDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Development Tools</CardTitle>
-          <CardDescription>Webhook simulation for testing</CardDescription>
+          <CardTitle>Status Update Tools</CardTitle>
+          <CardDescription>Send sample updates to refresh this request</CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
           <Button
@@ -302,7 +302,7 @@ export function ProcurementRequestDetailPage() {
             disabled={sendingWebhook || !detail.externalRequestReference}
             className="w-full"
           >
-            {sendingWebhook ? 'Processing...' : 'Simulate Status Webhook'}
+            {sendingWebhook ? 'Processing...' : 'Send Status Update'}
           </Button>
           <Button
             variant="outline"
@@ -310,7 +310,7 @@ export function ProcurementRequestDetailPage() {
             disabled={sendingWebhook}
             className="w-full"
           >
-            Simulate Project Webhook
+            Send Project Update
           </Button>
           <Button
             variant="outline"
@@ -318,7 +318,7 @@ export function ProcurementRequestDetailPage() {
             disabled={sendingWebhook}
             className="w-full"
           >
-            Simulate Budget Webhook
+            Send Budget Update
           </Button>
         </CardContent>
       </Card>
