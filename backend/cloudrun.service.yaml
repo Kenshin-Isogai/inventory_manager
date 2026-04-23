@@ -1,0 +1,22 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: inventory-manager-api
+spec:
+  template:
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      containers:
+        - image: IMAGE_PLACEHOLDER
+          ports:
+            - containerPort: 8080
+          env:
+            - name: APP_ENV
+              value: cloud
+            - name: APP_MODE
+              value: cloud
+            - name: AUTH_MODE
+              value: none
+            - name: RBAC_MODE
+              value: dry_run

@@ -1,0 +1,28 @@
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: inventory-manager-migrate
+spec:
+  template:
+    spec:
+      template:
+        spec:
+          taskCount: 1
+          template:
+            spec:
+              maxRetries: 0
+              timeoutSeconds: 900
+              containers:
+                - image: IMAGE_PLACEHOLDER
+                  command: ["/app/migrate"]
+                  args: ["up"]
+                  env:
+                    - name: APP_ENV
+                      value: cloud
+                    - name: APP_MODE
+                      value: cloud
+                    - name: DATABASE_URL
+                      valueFrom:
+                        secretKeyRef:
+                          name: DATABASE_URL
+                          key: latest

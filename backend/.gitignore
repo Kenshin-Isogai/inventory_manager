@@ -1,0 +1,9 @@
+bin/
+tmp/
+artifacts/
+coverage.out
+*.log
+*.db
+.env
+.env.local
+.env.*.local

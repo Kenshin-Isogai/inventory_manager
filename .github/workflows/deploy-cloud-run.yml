@@ -1,0 +1,88 @@
+name: deploy-cloud-run
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-cloud-run-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GAR_IMAGE_FRONTEND: ${{ vars.GAR_LOCATION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GAR_REPOSITORY }}/inventory-manager-frontend
+  GAR_IMAGE_BACKEND: ${{ vars.GAR_LOCATION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GAR_REPOSITORY }}/inventory-manager-backend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Verify backend
+        working-directory: backend
+        run: |
+          go mod tidy
+          go test ./...
+          go build ./cmd/server
+      - name: Verify frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run lint
+          npm run test
+          npm run build
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud auth configure-docker ${{ vars.GAR_LOCATION }}-docker.pkg.dev --quiet
+      - run: docker build -t $GAR_IMAGE_FRONTEND:${GITHUB_SHA} ./frontend
+      - run: docker build -t $GAR_IMAGE_BACKEND:${GITHUB_SHA} ./backend
+      - run: docker push $GAR_IMAGE_FRONTEND:${GITHUB_SHA}
+      - run: docker push $GAR_IMAGE_BACKEND:${GITHUB_SHA}
+      - name: Deploy backend
+        run: |
+          gcloud run deploy "${{ vars.CLOUD_RUN_BACKEND_SERVICE }}" \
+            --image "$GAR_IMAGE_BACKEND:${GITHUB_SHA}" \
+            --region "${{ vars.GCP_REGION }}" \
+            --platform managed \
+            --allow-unauthenticated \
+            --set-env-vars APP_ENV=cloud,APP_MODE=cloud,AUTH_MODE=${{ vars.AUTH_MODE }},RBAC_MODE=${{ vars.RBAC_MODE }},STORAGE_MODE=${{ vars.STORAGE_MODE }},JWT_VERIFIER=${{ vars.JWT_VERIFIER }},OIDC_EXPECTED_ISSUER=https://securetoken.google.com/${{ vars.GCP_PROJECT_ID }},OIDC_EXPECTED_AUDIENCE=${{ vars.GCP_PROJECT_ID }},OIDC_JWKS_URL=https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com,JWT_SIGNING_ALGORITHMS=${{ vars.JWT_SIGNING_ALGORITHMS }},OIDC_REQUIRE_EMAIL_VERIFIED=true \
+            --set-secrets DATABASE_URL=DATABASE_URL:latest,PROCUREMENT_WEBHOOK_SECRET=PROCUREMENT_WEBHOOK_SECRET:latest
+      - name: Resolve backend URL
+        id: backend_url
+        run: |
+          echo "url=$(gcloud run services describe "${{ vars.CLOUD_RUN_BACKEND_SERVICE }}" --region "${{ vars.GCP_REGION }}" --format='value(status.url)')" >> "$GITHUB_OUTPUT"
+      - name: Deploy frontend
+        run: |
+          gcloud run deploy "${{ vars.CLOUD_RUN_FRONTEND_SERVICE }}" \
+            --image "$GAR_IMAGE_FRONTEND:${GITHUB_SHA}" \
+            --region "${{ vars.GCP_REGION }}" \
+            --platform managed \
+            --allow-unauthenticated \
+            --set-env-vars API_BASE_URL=${{ steps.backend_url.outputs.url }},FIREBASE_API_KEY=${{ vars.FIREBASE_API_KEY }},FIREBASE_AUTH_DOMAIN=${{ vars.FIREBASE_AUTH_DOMAIN }},FIREBASE_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},FIREBASE_APP_ID=${{ vars.FIREBASE_APP_ID }}
+      - name: Verify deployed health
+        run: |
+          BACKEND_URL="$(gcloud run services describe "${{ vars.CLOUD_RUN_BACKEND_SERVICE }}" --region "${{ vars.GCP_REGION }}" --format='value(status.url)')"
+          FRONTEND_URL="$(gcloud run services describe "${{ vars.CLOUD_RUN_FRONTEND_SERVICE }}" --region "${{ vars.GCP_REGION }}" --format='value(status.url)')"
+          echo "Backend URL: ${BACKEND_URL}"
+          echo "Frontend URL: ${FRONTEND_URL}"
+          curl --fail --silent --show-error "${BACKEND_URL}/health" >/dev/null
+          curl --fail --silent --show-error "${BACKEND_URL}/ready" >/dev/null
+          curl --fail --silent --show-error "${FRONTEND_URL}" >/dev/null

@@ -1,0 +1,29 @@
+name: backend-ci
+
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+      - run: go mod tidy
+      - run: go test ./...
+      - run: go build ./cmd/server
+      - run: docker build -t inventory-manager-backend:test .
