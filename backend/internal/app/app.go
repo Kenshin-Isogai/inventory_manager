@@ -58,7 +58,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		return nil, err
 	}
 	phaseThreeService := ocr.NewService(ocr.NewRepository(db), store, ocrProvider, phaseTwoService)
-	router := httpapi.NewRouter(cfg, logger, authService, phaseOneService, phaseTwoService, phaseThreeService)
+	router := httpapi.NewRouter(cfg, logger, authService, phaseOneService, phaseTwoService, phaseThreeService, db.PingContext)
 
 	server := &http.Server{
 		Addr:         ":" + cfg.HTTP.Port,

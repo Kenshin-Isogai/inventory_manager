@@ -1,70 +1,163 @@
 import type { ChangeEvent } from 'react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useSWRConfig } from 'swr'
 
-import { SectionCard } from '../components/SectionCard'
-import { useImports } from '../hooks/useImports'
-import { importMasterDataCSV } from '../lib/mockApi'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import { useImports } from '@/hooks/useImports'
+import { importMasterDataCSV } from '@/lib/mockApi'
+import { Upload, FileUp } from 'lucide-react'
 
 type OperatorImportsPageProps = {
-  mode: 'upload' | 'history'
+  mode?: 'upload' | 'history'
 }
 
-export function OperatorImportsPage({ mode }: OperatorImportsPageProps) {
+function getStatusBadgeVariant(status: string) {
+  switch (status.toLowerCase()) {
+    case 'completed':
+      return 'default'
+    case 'pending':
+      return 'secondary'
+    case 'failed':
+      return 'destructive'
+    default:
+      return 'outline'
+  }
+}
+
+export function OperatorImportsPage({ mode = 'upload' }: OperatorImportsPageProps) {
   const { data } = useImports()
   const { mutate } = useSWRConfig()
   const [message, setMessage] = useState('')
+  const [isUploading, setIsUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) {
       return
     }
-    await importMasterDataCSV('items', file)
-    await mutate('imports')
-    setMessage(`Staged import ${file.name}`)
-    event.target.value = ''
+    setIsUploading(true)
+    try {
+      await importMasterDataCSV('items', file)
+      await mutate('imports')
+      setMessage(`Staged import ${file.name}`)
+      setTimeout(() => setMessage(''), 4000)
+    } finally {
+      setIsUploading(false)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
   }
 
   return (
-    <div className="page-grid">
-      {mode === 'upload' ? (
-        <SectionCard title="Imports Upload" subtitle="Operator-facing upload lane for local CSV rehearsal before cloud integration is fixed.">
-          <label className="stack-form">
-            <span>Upload CSV</span>
-            <input type="file" accept=".csv,text/csv" onChange={(event) => void handleUpload(event)} />
-          </label>
-          <p className="muted-copy">
-            Current local implementation reuses the import job pipeline so operators can verify upload, validation, and history wiring.
-          </p>
-          {message ? <p className="muted-copy">{message}</p> : null}
-        </SectionCard>
-      ) : null}
+    <div className="space-y-6 p-6">
+      <div className="space-y-2">
+        <h1 className="text-3xl font-bold tracking-tight">Imports</h1>
+        <p className="text-muted-foreground">
+          Upload and manage CSV imports for master data
+        </p>
+      </div>
 
-      <SectionCard title="Imports History" subtitle="Latest import jobs available to operators without leaving the application shell.">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Type</th>
-              <th>Status</th>
-              <th>File</th>
-              <th>Summary</th>
-              <th>Created</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data?.rows.map((row) => (
-              <tr key={row.id}>
-                <td>{row.importType}</td>
-                <td>{row.status}</td>
-                <td>{row.fileName}</td>
-                <td>{row.summary}</td>
-                <td>{row.createdAt}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </SectionCard>
+      {mode === 'upload' && (
+        <Card className="border-dashed border-2 border-primary/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Upload className="w-5 h-5" />
+              Upload CSV
+            </CardTitle>
+            <CardDescription>
+              Operator-facing upload lane for local CSV rehearsal before cloud integration is fixed.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="csv-upload">Select CSV File</Label>
+              <div className="flex gap-2">
+                <input
+                  ref={fileInputRef}
+                  id="csv-upload"
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={(event) => void handleUpload(event)}
+                  disabled={isUploading}
+                  className="hidden"
+                />
+                <Button
+                  variant="outline"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploading}
+                  className="gap-2"
+                >
+                  <FileUp className="w-4 h-4" />
+                  {isUploading ? 'Uploading...' : 'Choose File'}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Current local implementation reuses the import job pipeline so operators can verify upload, validation, and history wiring.
+              </p>
+            </div>
+            {message && (
+              <div className="p-3 bg-green-50 border border-green-200 text-green-800 text-sm rounded">
+                {message}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Import History</CardTitle>
+          <CardDescription>Latest import jobs available to operators without leaving the application shell</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-20">Type</TableHead>
+                  <TableHead className="w-24">Status</TableHead>
+                  <TableHead>File</TableHead>
+                  <TableHead className="max-w-sm">Summary</TableHead>
+                  <TableHead className="w-32">Created</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data?.rows.map((row) => (
+                  <TableRow key={row.id}>
+                    <TableCell className="text-sm font-medium">{row.importType}</TableCell>
+                    <TableCell>
+                      <Badge variant={getStatusBadgeVariant(row.status)} className="text-xs">
+                        {row.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm">{row.fileName}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{row.summary}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{row.createdAt}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          {data?.rows.length === 0 && (
+            <div className="text-center py-8 text-muted-foreground">
+              No import history yet.
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

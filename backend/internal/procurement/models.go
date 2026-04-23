@@ -102,6 +102,28 @@ type ProcurementRequestLineCreate struct {
 	Note               string `json:"note"`
 }
 
+type ProcurementRequestUpdateInput struct {
+	Title            string                         `json:"title"`
+	ProjectID        string                         `json:"projectId"`
+	BudgetCategoryID string                         `json:"budgetCategoryId"`
+	SupplierID       string                         `json:"supplierId"`
+	Lines            []ProcurementRequestLineUpdate `json:"lines"`
+}
+
+type ProcurementRequestLineUpdate struct {
+	ID                 string `json:"id"`
+	ItemID             string `json:"itemId"`
+	QuotationLineID    string `json:"quotationLineId"`
+	RequestedQuantity  int    `json:"requestedQuantity"`
+	DeliveryLocation   string `json:"deliveryLocation"`
+	AccountingCategory string `json:"accountingCategory"`
+	BudgetCategoryID   string `json:"budgetCategoryId"`
+	SupplierContact    string `json:"supplierContact"`
+	LeadTimeDays       int    `json:"leadTimeDays"`
+	Status             string `json:"status"`
+	Note               string `json:"note"`
+}
+
 type OCRProcurementDraftCreateInput struct {
 	SourceOCRJobID  string                          `json:"sourceOcrJobId"`
 	Title           string                          `json:"title"`
@@ -164,6 +186,74 @@ type ProcurementReconcileResult struct {
 	QuantityProgression string `json:"quantityProgression"`
 	LastReconciledAt    string `json:"lastReconciledAt"`
 	SyncSource          string `json:"syncSource"`
+}
+
+type PurchaseOrderSummary struct {
+	ID                 string `json:"id"`
+	ProcurementBatchID string `json:"procurementBatchId"`
+	BatchNumber        string `json:"batchNumber"`
+	OrderNumber        string `json:"orderNumber"`
+	Status             string `json:"status"`
+	SupplierName       string `json:"supplierName"`
+	OrderedQuantity    int    `json:"orderedQuantity"`
+	ReceivedQuantity   int    `json:"receivedQuantity"`
+	OpenQuantity       int    `json:"openQuantity"`
+	IssuedAt           string `json:"issuedAt"`
+}
+
+type PurchaseOrderList struct {
+	Rows []PurchaseOrderSummary `json:"rows"`
+}
+
+type PurchaseOrderLine struct {
+	ID                  string `json:"id"`
+	ProcurementLineID   string `json:"procurementLineId"`
+	ItemID              string `json:"itemId"`
+	ItemNumber          string `json:"itemNumber"`
+	Description         string `json:"description"`
+	OrderedQuantity     int    `json:"orderedQuantity"`
+	ReceivedQuantity    int    `json:"receivedQuantity"`
+	OpenQuantity        int    `json:"openQuantity"`
+	ExpectedArrivalDate string `json:"expectedArrivalDate"`
+	Status              string `json:"status"`
+	DeliveryLocation    string `json:"deliveryLocation"`
+	Note                string `json:"note"`
+}
+
+type PurchaseOrderDetail struct {
+	ID                 string              `json:"id"`
+	ProcurementBatchID string              `json:"procurementBatchId"`
+	BatchNumber        string              `json:"batchNumber"`
+	Title              string              `json:"title"`
+	OrderNumber        string              `json:"orderNumber"`
+	Status             string              `json:"status"`
+	SupplierName       string              `json:"supplierName"`
+	IssuedAt           string              `json:"issuedAt"`
+	Lines              []PurchaseOrderLine `json:"lines"`
+}
+
+type PurchaseOrderLineInput struct {
+	ID                  string `json:"id"`
+	ProcurementLineID   string `json:"procurementLineId"`
+	OrderedQuantity     int    `json:"orderedQuantity"`
+	ExpectedArrivalDate string `json:"expectedArrivalDate"`
+	Status              string `json:"status"`
+	Note                string `json:"note"`
+}
+
+type PurchaseOrderCreateInput struct {
+	ProcurementBatchID string                   `json:"procurementBatchId"`
+	OrderNumber        string                   `json:"orderNumber"`
+	Status             string                   `json:"status"`
+	IssuedAt           string                   `json:"issuedAt"`
+	Lines              []PurchaseOrderLineInput `json:"lines"`
+}
+
+type PurchaseOrderUpdateInput struct {
+	OrderNumber string                   `json:"orderNumber"`
+	Status      string                   `json:"status"`
+	IssuedAt    string                   `json:"issuedAt"`
+	Lines       []PurchaseOrderLineInput `json:"lines"`
 }
 
 type MasterSyncResult struct {

@@ -13,6 +13,7 @@ export type RouteDefinition = {
   label: string
   description: string
   roles: RoleKey[]
+  icon?: React.ComponentType<{ className?: string }>
 }
 
 export type BootstrapResponse = {

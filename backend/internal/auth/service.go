@@ -47,25 +47,47 @@ type SessionResponse struct {
 }
 
 type RegistrationInput struct {
-	Email       string `json:"email"`
-	DisplayName string `json:"displayName"`
+	Username      string `json:"username"`
+	Email         string `json:"email"`
+	DisplayName   string `json:"displayName"`
+	RequestedRole string `json:"requestedRole"`
+	Memo          string `json:"memo"`
+	HostedDomain  string `json:"hostedDomain"`
 }
 
 type UserSummary struct {
 	ID              string   `json:"id"`
+	Username        string   `json:"username"`
 	Email           string   `json:"email"`
 	DisplayName     string   `json:"displayName"`
 	Status          string   `json:"status"`
 	Roles           []string `json:"roles"`
 	Provider        string   `json:"provider"`
+	RequestedRole   string   `json:"requestedRole"`
+	RegistrationMemo string  `json:"registrationMemo"`
+	HostedDomain    string   `json:"hostedDomain"`
 	LastLoginAt     string   `json:"lastLoginAt"`
 	UpdatedAt       string   `json:"updatedAt"`
 	RejectionReason string   `json:"rejectionReason"`
 }
 
 type RoleSummary struct {
+	Key         string   `json:"key"`
+	Description string   `json:"description"`
+	Permissions []string `json:"permissions"`
+}
+
+type PermissionSummary struct {
 	Key         string `json:"key"`
 	Description string `json:"description"`
+}
+
+type UserStatusHistoryEntry struct {
+	ID        string `json:"id"`
+	Status    string `json:"status"`
+	Reason    string `json:"reason"`
+	ChangedBy string `json:"changedBy"`
+	CreatedAt string `json:"createdAt"`
 }
 
 type ApproveUserInput struct {
@@ -108,6 +130,13 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 		if !strings.HasPrefix(r.URL.Path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/users" && s.repo != nil {
+			hasActiveUsers, err := s.repo.HasActiveUsers(r.Context())
+			if err == nil && !hasActiveUsers {
+				next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), Principal{Authenticated: false, Status: "bootstrap"})))
+				return
+			}
 		}
 
 		principal, err := s.CurrentPrincipal(r.Context(), bearerToken(r.Header.Get("Authorization")))
@@ -210,7 +239,21 @@ func (s *Service) Register(ctx context.Context, principal Principal, input Regis
 	if displayName == "" {
 		displayName = defaultString(principal.DisplayName, email)
 	}
-	user, err := s.repo.UpsertPendingRegistration(ctx, principal.Provider, principal.Subject, email, displayName)
+	requestedRole := ""
+	if roles := normalizeRoles([]string{input.RequestedRole}); len(roles) > 0 {
+		requestedRole = roles[0]
+	}
+	user, err := s.repo.UpsertPendingRegistration(
+		ctx,
+		principal.Provider,
+		principal.Subject,
+		email,
+		displayName,
+		strings.TrimSpace(input.Username),
+		requestedRole,
+		strings.TrimSpace(input.Memo),
+		strings.TrimSpace(input.HostedDomain),
+	)
 	if err != nil {
 		return UserSummary{}, err
 	}
@@ -273,12 +316,16 @@ func NewRepository(db *sql.DB) *Repository {
 
 type userRow struct {
 	ID              string
+	Username        string
 	Email           string
 	DisplayName     string
 	Status          string
 	Roles           []string
 	Provider        string
 	Subject         string
+	RequestedRole   string
+	RegistrationMemo string
+	HostedDomain    string
 	LastLoginAt     sql.NullTime
 	UpdatedAt       time.Time
 	RejectionReason string
@@ -288,12 +335,16 @@ func (r *Repository) FindUser(ctx context.Context, provider, subject, email stri
 	row := r.db.QueryRowContext(ctx, `
 		SELECT
 			u.id::text,
+			COALESCE(u.username, ''),
 			u.email,
 			u.display_name,
 			u.status,
 			COALESCE(array_agg(ur.role_key ORDER BY ur.role_key) FILTER (WHERE ur.role_key IS NOT NULL), ARRAY[]::text[]),
 			COALESCE(u.identity_provider, ''),
 			COALESCE(u.identity_subject, ''),
+			COALESCE(u.requested_role, ''),
+			COALESCE(u.registration_memo, ''),
+			COALESCE(u.hosted_domain, ''),
 			u.last_login_at,
 			u.updated_at,
 			COALESCE(u.rejection_reason, '')
@@ -309,12 +360,16 @@ func (r *Repository) FindUser(ctx context.Context, provider, subject, email stri
 	var record userRow
 	if err := row.Scan(
 		&record.ID,
+		&record.Username,
 		&record.Email,
 		&record.DisplayName,
 		&record.Status,
 		&record.Roles,
 		&record.Provider,
 		&record.Subject,
+		&record.RequestedRole,
+		&record.RegistrationMemo,
+		&record.HostedDomain,
 		&record.LastLoginAt,
 		&record.UpdatedAt,
 		&record.RejectionReason,
@@ -329,38 +384,52 @@ func (r *Repository) TouchLastLogin(ctx context.Context, id string) error {
 	return err
 }
 
-func (r *Repository) UpsertPendingRegistration(ctx context.Context, provider, subject, email, displayName string) (UserSummary, error) {
+func (r *Repository) UpsertPendingRegistration(ctx context.Context, provider, subject, email, displayName, username, requestedRole, memo, hostedDomain string) (UserSummary, error) {
 	id := uuid.New().String()
 	row := r.db.QueryRowContext(ctx, `
-		INSERT INTO app_users (id, email, display_name, status, identity_provider, identity_subject, updated_at, rejection_reason)
-		VALUES ($1::uuid, $2, $3, 'pending', NULLIF($4, ''), NULLIF($5, ''), NOW(), '')
+		INSERT INTO app_users (
+			id, username, email, display_name, status, identity_provider, identity_subject, requested_role, registration_memo, hosted_domain, updated_at, rejection_reason
+		)
+		VALUES ($1::uuid, NULLIF($2, ''), $3, $4, 'pending', NULLIF($5, ''), NULLIF($6, ''), $7, $8, $9, NOW(), '')
 		ON CONFLICT (email) DO UPDATE
-		SET display_name = EXCLUDED.display_name,
+		SET username = COALESCE(NULLIF(EXCLUDED.username, ''), app_users.username),
+		    display_name = EXCLUDED.display_name,
 		    status = 'pending',
 		    identity_provider = COALESCE(NULLIF(EXCLUDED.identity_provider, ''), app_users.identity_provider),
 		    identity_subject = COALESCE(NULLIF(EXCLUDED.identity_subject, ''), app_users.identity_subject),
+		    requested_role = EXCLUDED.requested_role,
+		    registration_memo = EXCLUDED.registration_memo,
+		    hosted_domain = EXCLUDED.hosted_domain,
 		    rejection_reason = '',
 		    updated_at = NOW()
 		RETURNING
 			id::text,
+			COALESCE(username, ''),
 			email,
 			display_name,
 			status,
 			COALESCE(identity_provider, ''),
 			COALESCE(identity_subject, ''),
+			COALESCE(requested_role, ''),
+			COALESCE(registration_memo, ''),
+			COALESCE(hosted_domain, ''),
 			last_login_at,
 			updated_at,
 			COALESCE(rejection_reason, '')
-	`, id, email, displayName, provider, subject)
+	`, id, username, email, displayName, provider, subject, requestedRole, memo, hostedDomain)
 
 	var record userRow
 	if err := row.Scan(
 		&record.ID,
+		&record.Username,
 		&record.Email,
 		&record.DisplayName,
 		&record.Status,
 		&record.Provider,
 		&record.Subject,
+		&record.RequestedRole,
+		&record.RegistrationMemo,
+		&record.HostedDomain,
 		&record.LastLoginAt,
 		&record.UpdatedAt,
 		&record.RejectionReason,
@@ -368,6 +437,9 @@ func (r *Repository) UpsertPendingRegistration(ctx context.Context, provider, su
 		return UserSummary{}, fmt.Errorf("upsert registration: %w", err)
 	}
 	record.Roles = []string{}
+	if err := r.recordUserStatusHistory(ctx, r.db, record.ID, record.Status, "", "self-registration"); err != nil {
+		return UserSummary{}, err
+	}
 	return toUserSummary(record), nil
 }
 
@@ -383,12 +455,16 @@ func (r *Repository) ListUsers(ctx context.Context) ([]UserSummary, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT
 			u.id::text,
+			COALESCE(u.username, ''),
 			u.email,
 			u.display_name,
 			u.status,
 			COALESCE(array_agg(ur.role_key ORDER BY ur.role_key) FILTER (WHERE ur.role_key IS NOT NULL), ARRAY[]::text[]),
 			COALESCE(u.identity_provider, ''),
 			COALESCE(u.identity_subject, ''),
+			COALESCE(u.requested_role, ''),
+			COALESCE(u.registration_memo, ''),
+			COALESCE(u.hosted_domain, ''),
 			u.last_login_at,
 			u.updated_at,
 			COALESCE(u.rejection_reason, '')
@@ -407,12 +483,16 @@ func (r *Repository) ListUsers(ctx context.Context) ([]UserSummary, error) {
 		var record userRow
 		if err := rows.Scan(
 			&record.ID,
+			&record.Username,
 			&record.Email,
 			&record.DisplayName,
 			&record.Status,
 			&record.Roles,
 			&record.Provider,
 			&record.Subject,
+			&record.RequestedRole,
+			&record.RegistrationMemo,
+			&record.HostedDomain,
 			&record.LastLoginAt,
 			&record.UpdatedAt,
 			&record.RejectionReason,
@@ -425,7 +505,16 @@ func (r *Repository) ListUsers(ctx context.Context) ([]UserSummary, error) {
 }
 
 func (r *Repository) ListRoles(ctx context.Context) ([]RoleSummary, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT key, description FROM roles ORDER BY key`)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			r.key,
+			r.description,
+			COALESCE(array_agg(rp.permission_key ORDER BY rp.permission_key) FILTER (WHERE rp.permission_key IS NOT NULL), ARRAY[]::text[])
+		FROM roles r
+		LEFT JOIN role_permissions rp ON rp.role_key = r.key
+		GROUP BY r.key, r.description
+		ORDER BY r.key
+	`)
 	if err != nil {
 		return nil, fmt.Errorf("list roles: %w", err)
 	}
@@ -434,7 +523,7 @@ func (r *Repository) ListRoles(ctx context.Context) ([]RoleSummary, error) {
 	result := []RoleSummary{}
 	for rows.Next() {
 		var row RoleSummary
-		if err := rows.Scan(&row.Key, &row.Description); err != nil {
+		if err := rows.Scan(&row.Key, &row.Description, &row.Permissions); err != nil {
 			return nil, fmt.Errorf("scan roles: %w", err)
 		}
 		result = append(result, row)
@@ -470,16 +559,23 @@ func (r *Repository) UpdateUserStatus(ctx context.Context, id, status, rejection
 			}
 		}
 	}
+	if err := r.recordUserStatusHistory(ctx, tx, id, status, rejectionReason, "admin"); err != nil {
+		return UserSummary{}, err
+	}
 
 	row := tx.QueryRowContext(ctx, `
 		SELECT
 			u.id::text,
+			COALESCE(u.username, ''),
 			u.email,
 			u.display_name,
 			u.status,
 			COALESCE(array_agg(ur.role_key ORDER BY ur.role_key) FILTER (WHERE ur.role_key IS NOT NULL), ARRAY[]::text[]),
 			COALESCE(u.identity_provider, ''),
 			COALESCE(u.identity_subject, ''),
+			COALESCE(u.requested_role, ''),
+			COALESCE(u.registration_memo, ''),
+			COALESCE(u.hosted_domain, ''),
 			u.last_login_at,
 			u.updated_at,
 			COALESCE(u.rejection_reason, '')
@@ -492,12 +588,16 @@ func (r *Repository) UpdateUserStatus(ctx context.Context, id, status, rejection
 	var record userRow
 	if err := row.Scan(
 		&record.ID,
+		&record.Username,
 		&record.Email,
 		&record.DisplayName,
 		&record.Status,
 		&record.Roles,
 		&record.Provider,
 		&record.Subject,
+		&record.RequestedRole,
+		&record.RegistrationMemo,
+		&record.HostedDomain,
 		&record.LastLoginAt,
 		&record.UpdatedAt,
 		&record.RejectionReason,
@@ -518,11 +618,15 @@ func toUserSummary(record userRow) UserSummary {
 	}
 	return UserSummary{
 		ID:              record.ID,
+		Username:        record.Username,
 		Email:           record.Email,
 		DisplayName:     record.DisplayName,
 		Status:          record.Status,
 		Roles:           record.Roles,
 		Provider:        record.Provider,
+		RequestedRole:   record.RequestedRole,
+		RegistrationMemo: record.RegistrationMemo,
+		HostedDomain:    record.HostedDomain,
 		LastLoginAt:     lastLoginAt,
 		UpdatedAt:       record.UpdatedAt.UTC().Format(time.RFC3339),
 		RejectionReason: record.RejectionReason,

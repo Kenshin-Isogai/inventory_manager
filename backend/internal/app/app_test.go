@@ -26,7 +26,7 @@ func TestHealthEndpoint(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 
-	router := httpapi.NewRouter(cfg, logging.NewJSONLogger("debug"), nil, inventory.NewService(nil), procurement.NewService(nil, nil, nil, nil), ocr.NewService(nil, nil, nil, nil))
+	router := httpapi.NewRouter(cfg, logging.NewJSONLogger("debug"), nil, inventory.NewService(nil), procurement.NewService(nil, nil, nil, nil), ocr.NewService(nil, nil, nil, nil), nil)
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {

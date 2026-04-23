@@ -93,6 +93,30 @@ func (h Handlers) ProcurementRequests(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, APIEnvelope[procurement.ProcurementRequestList]{Data: rows})
 }
 
+func (h Handlers) ProcurementOrders(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement", "inventory") {
+		return
+	}
+	rows, err := h.phaseTwo.Orders(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, APIEnvelope[procurement.PurchaseOrderList]{Data: rows})
+}
+
+func (h Handlers) ProcurementOrderDetail(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement", "inventory") {
+		return
+	}
+	detail, err := h.phaseTwo.OrderDetail(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, APIEnvelope[procurement.PurchaseOrderDetail]{Data: detail})
+}
+
 func (h Handlers) ProcurementRequestDetail(w http.ResponseWriter, r *http.Request) {
 	if !h.requireActiveRole(w, r, "procurement") {
 		return
@@ -121,6 +145,68 @@ func (h Handlers) CreateProcurementRequest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "status": "created"})
+}
+
+func (h Handlers) CreateProcurementOrder(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
+	var input procurement.PurchaseOrderCreateInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json payload"})
+		return
+	}
+	detail, err := h.phaseTwo.CreateOrder(r.Context(), input)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, APIEnvelope[procurement.PurchaseOrderDetail]{Data: detail})
+}
+
+func (h Handlers) UpdateProcurementRequest(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
+	var input procurement.ProcurementRequestUpdateInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json payload"})
+		return
+	}
+	detail, err := h.phaseTwo.UpdateRequest(r.Context(), r.PathValue("id"), input)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, APIEnvelope[procurement.ProcurementRequestDetail]{Data: detail})
+}
+
+func (h Handlers) UpdateProcurementOrder(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
+	var input procurement.PurchaseOrderUpdateInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json payload"})
+		return
+	}
+	detail, err := h.phaseTwo.UpdateOrder(r.Context(), r.PathValue("id"), input)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, APIEnvelope[procurement.PurchaseOrderDetail]{Data: detail})
+}
+
+func (h Handlers) DeleteProcurementOrder(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
+	if err := h.phaseTwo.DeleteOrder(r.Context(), r.PathValue("id")); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 func (h Handlers) ReconcileProcurementRequest(w http.ResponseWriter, r *http.Request) {

@@ -33,17 +33,17 @@ export function canAccessApp(roles: RoleKey[], app: AppSection) {
 export function defaultPathForApp(app: AppSection) {
   switch (app) {
     case 'operator':
-      return '/operator/dashboard'
+      return '/app/operator/requirements'
     case 'inventory':
-      return '/inventory/stock'
+      return '/app/inventory/items'
     case 'procurement':
-      return '/procurement/requests'
+      return '/app/procurement/requests'
     case 'inspector':
-      return '/inspector/arrivals'
+      return '/app/inspector/arrivals'
     case 'admin':
-      return '/admin/master-data'
+      return '/app/admin/master'
     default:
-      return '/operator/dashboard'
+      return '/app/operator/requirements'
   }
 }
 

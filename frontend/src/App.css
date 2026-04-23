@@ -1,7 +1,4 @@
-.page-grid {
-  animation: fade-in 320ms ease;
-}
-
+/* Animation keyframes */
 @keyframes fade-in {
   from {
     opacity: 0;

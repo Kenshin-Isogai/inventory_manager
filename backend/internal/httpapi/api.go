@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -29,10 +30,19 @@ type Handlers struct {
 	phaseOne   *inventory.Service
 	phaseTwo   *procurement.Service
 	phaseThree *ocr.Service
+	readyCheck func(context.Context) error
 }
 
-func NewHandlers(cfg config.Config, logger *slog.Logger, authService *auth.Service, phaseOne *inventory.Service, phaseTwo *procurement.Service, phaseThree *ocr.Service) Handlers {
-	return Handlers{cfg: cfg, logger: logger, auth: authService, phaseOne: phaseOne, phaseTwo: phaseTwo, phaseThree: phaseThree}
+func NewHandlers(cfg config.Config, logger *slog.Logger, authService *auth.Service, phaseOne *inventory.Service, phaseTwo *procurement.Service, phaseThree *ocr.Service, readyCheck func(context.Context) error) Handlers {
+	return Handlers{
+		cfg:        cfg,
+		logger:     logger,
+		auth:       authService,
+		phaseOne:   phaseOne,
+		phaseTwo:   phaseTwo,
+		phaseThree: phaseThree,
+		readyCheck: readyCheck,
+	}
 }
 
 func (h Handlers) Health(w http.ResponseWriter, _ *http.Request) {
@@ -42,7 +52,16 @@ func (h Handlers) Health(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (h Handlers) Ready(w http.ResponseWriter, _ *http.Request) {
+func (h Handlers) Ready(w http.ResponseWriter, r *http.Request) {
+	if h.readyCheck != nil {
+		if err := h.readyCheck(r.Context()); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"status": "not_ready",
+				"error":  err.Error(),
+			})
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status": "ready",
 		"mode":   h.cfg.App.Mode,

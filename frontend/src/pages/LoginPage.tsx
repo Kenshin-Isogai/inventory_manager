@@ -2,9 +2,13 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSWRConfig } from 'swr'
 
-import { SectionCard } from '../components/SectionCard'
-import { LOCAL_LOGIN_PROFILES, setStoredToken } from '../lib/auth'
-import { isFirebaseAuthConfigured, signInWithIdentityPlatform, signUpWithIdentityPlatform, sendVerificationEmail } from '../lib/firebaseAuth'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Separator } from '@/components/ui/separator'
+import { LOCAL_LOGIN_PROFILES, setStoredToken } from '@/lib/auth'
+import { isFirebaseAuthConfigured, signInWithIdentityPlatform, signUpWithIdentityPlatform, sendVerificationEmail } from '@/lib/firebaseAuth'
 
 export function LoginPage() {
   const navigate = useNavigate()
@@ -17,91 +21,131 @@ export function LoginPage() {
   async function handleLogin(token: string) {
     setStoredToken(token)
     await mutate('auth-session')
-    navigate('/operator/dashboard', { replace: true })
+    navigate('/app/portal', { replace: true })
   }
 
   return (
-    <div className="auth-page">
-      <SectionCard title="Login" subtitle="Identity Platform email/password is the primary flow. Local tokens stay available only for development.">
-        {isFirebaseAuthConfigured() ? (
-          <form
-            className="stack-form"
-            onSubmit={async (event) => {
-              event.preventDefault()
-              setError('')
-              try {
-                await signInWithIdentityPlatform(email, password)
-                await mutate('auth-session')
-                navigate('/operator/dashboard', { replace: true })
-              } catch (caught) {
-                setError(caught instanceof Error ? caught.message : 'Failed to sign in')
-              }
-            }}
-          >
-            <label>
-              <span>Email</span>
-              <input value={email} onChange={(event) => setEmail(event.target.value)} />
-            </label>
-            <label>
-              <span>Password</span>
-              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-            </label>
-            <div className="button-row">
-              <button type="submit" className="primary-button">
-                Sign In
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={async () => {
-                  setError('')
-                  try {
-                    await signUpWithIdentityPlatform(email, password)
-                    await sendVerificationEmail()
-                    await mutate('auth-session')
-                    navigate('/auth/verify-email', { replace: true })
-                  } catch (caught) {
-                    setError(caught instanceof Error ? caught.message : 'Failed to create account')
-                  }
-                }}
-              >
-                Create Account
-              </button>
-            </div>
-            {error ? <p className="muted-copy">{error}</p> : null}
-          </form>
-        ) : null}
-        {import.meta.env.DEV ? (
-          <>
-            <div className="auth-grid">
-              {LOCAL_LOGIN_PROFILES.map((profile) => (
-                <button key={profile.token} type="button" className="primary-button" onClick={() => void handleLogin(profile.token)}>
-                  {profile.label}: {profile.description}
-                </button>
-              ))}
-            </div>
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/5 via-background to-accent/5 p-4">
+      <Card className="w-full max-w-md">
+        <CardHeader className="space-y-2">
+          <CardTitle className="text-2xl">Sign In</CardTitle>
+          <CardDescription>
+            Identity Platform email/password is the primary flow. Local tokens stay available only for development.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {isFirebaseAuthConfigured() ? (
             <form
-              className="stack-form"
-              onSubmit={(event) => {
+              onSubmit={async (event) => {
                 event.preventDefault()
-                void handleLogin(manualToken)
+                setError('')
+                try {
+                  await signInWithIdentityPlatform(email, password)
+                  await mutate('auth-session')
+                  navigate('/app/portal', { replace: true })
+                } catch (caught) {
+                  setError(caught instanceof Error ? caught.message : 'Failed to sign in')
+                }
               }}
+              className="space-y-4"
             >
-              <label>
-                <span>Manual token</span>
-                <input
-                  value={manualToken}
-                  onChange={(event) => setManualToken(event.target.value)}
-                  placeholder="local:new.user@example.local|New User"
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="your@email.com"
                 />
-              </label>
-              <button type="submit" className="secondary-button">
-                Continue with token
-              </button>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="••••••••"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button type="submit" className="flex-1">
+                  Sign In
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="flex-1"
+                  onClick={async () => {
+                    setError('')
+                    try {
+                      await signUpWithIdentityPlatform(email, password)
+                      await sendVerificationEmail()
+                      await mutate('auth-session')
+                      navigate('/auth/verify-email', { replace: true })
+                    } catch (caught) {
+                      setError(caught instanceof Error ? caught.message : 'Failed to create account')
+                    }
+                  }}
+                >
+                  Create Account
+                </Button>
+              </div>
+              {error && <p className="text-sm text-destructive text-center">{error}</p>}
             </form>
-          </>
-        ) : null}
-      </SectionCard>
+          ) : null}
+
+          {import.meta.env.DEV ? (
+            <>
+              <Separator />
+              <div className="space-y-3">
+                <p className="text-sm font-medium text-muted-foreground">Development: Local Login Profiles</p>
+                <div className="grid gap-2">
+                  {LOCAL_LOGIN_PROFILES.map((profile) => (
+                    <Button
+                      key={profile.token}
+                      type="button"
+                      variant="outline"
+                      className="justify-start text-left h-auto py-3 px-3"
+                      onClick={() => void handleLogin(profile.token)}
+                    >
+                      <div>
+                        <p className="font-medium text-sm">{profile.label}</p>
+                        <p className="text-xs text-muted-foreground">{profile.description}</p>
+                      </div>
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              <Separator />
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  void handleLogin(manualToken)
+                }}
+                className="space-y-3"
+              >
+                <p className="text-sm font-medium text-muted-foreground">Manual Token Input</p>
+                <div className="space-y-2">
+                  <Label htmlFor="manual-token">Token</Label>
+                  <Input
+                    id="manual-token"
+                    value={manualToken}
+                    onChange={(event) => setManualToken(event.target.value)}
+                    placeholder="local:new.user@example.local|New User"
+                    className="text-xs"
+                  />
+                </div>
+                <Button type="submit" variant="outline" className="w-full">
+                  Continue with Token
+                </Button>
+              </form>
+            </>
+          ) : null}
+        </CardContent>
+      </Card>
     </div>
   )
 }

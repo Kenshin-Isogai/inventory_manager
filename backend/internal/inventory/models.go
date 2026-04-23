@@ -113,6 +113,11 @@ type ReservationCreateInput struct {
 	DeviceScopeID string `json:"deviceScopeId"`
 	Quantity      int    `json:"quantity"`
 	RequestedBy   string `json:"requestedBy"`
+	Purpose       string `json:"purpose"`
+	Priority      string `json:"priority"`
+	NeededByAt    string `json:"neededByAt"`
+	PlannedUseAt  string `json:"plannedUseAt"`
+	HoldUntilAt   string `json:"holdUntilAt"`
 	Note          string `json:"note"`
 }
 

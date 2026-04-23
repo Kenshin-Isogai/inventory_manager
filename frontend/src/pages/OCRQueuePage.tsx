@@ -1,13 +1,22 @@
 import { useState } from 'react'
 import type { ChangeEvent } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useSWRConfig } from 'swr'
 
-import { SectionCard } from '../components/SectionCard'
-import { useMasterData } from '../hooks/useMasterData'
-import { useOCRJobDetail } from '../hooks/useOCRJobDetail'
-import { useOCRJobs } from '../hooks/useOCRJobs'
-import { useProcurementBudgetCategories } from '../hooks/useProcurementBudgetCategories'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Separator } from '@/components/ui/separator'
+
+import { useMasterData } from '@/hooks/useMasterData'
+import { useOCRJobDetail } from '@/hooks/useOCRJobDetail'
+import { useOCRJobs } from '@/hooks/useOCRJobs'
+import { useProcurementBudgetCategories } from '@/hooks/useProcurementBudgetCategories'
 import {
   assistOCRLine,
   createProcurementDraftFromOCR,
@@ -15,7 +24,7 @@ import {
   registerOCRItem,
   updateOCRReview,
   uploadOCRJob,
-} from '../lib/mockApi'
+} from '@/lib/mockApi'
 import type {
   OCRJobDetailResponse,
   OCRLineAssistSuggestion,
@@ -23,14 +32,13 @@ import type {
   OCRRegisterItemInput,
   OCRResultLine,
   OCRReviewUpdateInput,
-} from '../types'
+} from '@/types'
 
 type RegisterDraft = OCRRegisterItemInput
 type ReviewHeaderOverride = Partial<Pick<OCRReviewUpdateInput, 'supplierId' | 'quotationNumber' | 'issueDate'>>
 
 export function OCRQueuePage() {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
   const { mutate } = useSWRConfig()
   const { data: jobs } = useOCRJobs()
   const { data: masterData } = useMasterData()
@@ -157,7 +165,7 @@ export function OCRQueuePage() {
     }
     setDraftError('')
     if (detail.procurementRequestId) {
-      navigateToProcurement(detail.procurementRequestId)
+      navigate(`/app/procurement/requests/${detail.procurementRequestId}`)
       return
     }
     setCreatingDraft(true)
@@ -167,7 +175,7 @@ export function OCRQueuePage() {
       }
       const result = await createProcurementDraftFromOCR(selectedID)
       await Promise.all([mutate('ocr-jobs'), mutate(['ocr-job-detail', selectedID]), mutate('procurement-requests')])
-      navigateToProcurement(result.procurementRequestId)
+      navigate(`/app/procurement/requests/${result.procurementRequestId}`)
     } catch (error) {
       setDraftError(error instanceof Error ? error.message : 'Failed to create procurement draft')
     } finally {
@@ -237,292 +245,419 @@ export function OCRQueuePage() {
     })
   }
 
-  function navigateToProcurement(requestId: string) {
-    const next = new URLSearchParams(searchParams)
-    next.set('requestId', requestId)
-    navigate({ pathname: '/procurement/requests', search: next.toString() })
-  }
-
   return (
-    <div className="page-grid">
-      <SectionCard title="OCR Queue" subtitle="Quotation uploads are stored as artifacts and converted into draft OCR review jobs.">
-        <div className="stack-form">
-          <label>
-            <span>Upload quotation PDF or image</span>
-            <input type="file" accept=".pdf,image/*" onChange={handleFileUpload} />
-          </label>
-        </div>
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>File</th>
-              <th>Status</th>
-              <th>Provider</th>
-              <th>Retries</th>
-              <th>Updated</th>
-            </tr>
-          </thead>
-          <tbody>
-            {jobs?.rows.map((job) => (
-              <tr key={job.id} onClick={() => setSelectedIDOverride(job.id)} className={selectedID === job.id ? 'selected-row' : ''}>
-                <td>{job.fileName}</td>
-                <td>{job.status}</td>
-                <td>{job.provider}</td>
-                <td>{job.retryCount}</td>
-                <td>{job.updatedAt}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </SectionCard>
+    <div className="p-6 space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">OCR Queue</h1>
+        <p className="text-muted-foreground mt-1">Upload and review quotations for OCR extraction</p>
+      </div>
 
-      <SectionCard title="OCR Review" subtitle="Draft extraction stays editable before any procurement request is created.">
-        <dl className="definition-list">
-          <div>
-            <dt>Supplier (OCR)</dt>
-            <dd>{detail?.supplierName || '-'}</dd>
-          </div>
-          <div>
-            <dt>Supplier (matched)</dt>
-            <dd>
-              {detail?.supplierMatch?.[0]
-                ? `${detail.supplierMatch[0].name} (${Math.round(detail.supplierMatch[0].score * 100)}%)`
-                : detail?.supplierId || '-'}
-            </dd>
-          </div>
-          <div>
-            <dt>Linked request</dt>
-            <dd>{detail?.procurementBatchNumber || detail?.procurementRequestId || '-'}</dd>
-          </div>
-          <div>
-            <dt>Retry count</dt>
-            <dd>{detail?.retryCount ?? 0}</dd>
-          </div>
-          <div>
-            <dt>Artifact</dt>
-            <dd>{detail?.artifactPath}</dd>
-          </div>
-          <div>
-            <dt>Raw payload</dt>
-            <dd>{detail?.rawPayload}</dd>
-          </div>
-        </dl>
-
-        <div className="stack-form">
-          <div className="two-column">
-            <label>
-              <span>Supplier</span>
-              <select value={currentHeader?.supplierId ?? ''} onChange={(event) => updateReviewHeader({ supplierId: event.target.value })}>
-                <option value="">Unmatched</option>
-                {dedupeSuppliers(detail, masterData).map((supplier) => (
-                  <option key={supplier.id} value={supplier.id}>
-                    {supplier.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Quotation number</span>
-              <input
-                value={currentHeader?.quotationNumber ?? ''}
-                onChange={(event) => updateReviewHeader({ quotationNumber: event.target.value })}
+      <div className="grid grid-cols-3 gap-6">
+        <Card className="col-span-2">
+          <CardHeader>
+            <CardTitle>Jobs</CardTitle>
+            <CardDescription>Uploaded quotation files and their processing status</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="file-upload">Upload quotation PDF or image</Label>
+              <Input
+                id="file-upload"
+                type="file"
+                accept=".pdf,image/*"
+                onChange={handleFileUpload}
               />
-            </label>
-          </div>
-          <div className="two-column">
-            <label>
-              <span>Issue date</span>
-              <input value={currentHeader?.issueDate ?? ''} onChange={(event) => updateReviewHeader({ issueDate: event.target.value })} />
-            </label>
-            <label>
-              <span>OCR error</span>
-              <input value={detail?.errorMessage ?? ''} disabled />
-            </label>
-          </div>
-        </div>
+            </div>
+            <div className="border rounded-lg overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>File</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Provider</TableHead>
+                    <TableHead>Retries</TableHead>
+                    <TableHead>Updated</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {jobs?.rows.map((job) => (
+                    <TableRow
+                      key={job.id}
+                      onClick={() => setSelectedIDOverride(job.id)}
+                      className={`cursor-pointer ${selectedID === job.id ? 'bg-muted' : ''}`}
+                    >
+                      <TableCell className="font-medium">{job.fileName}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{job.status}</Badge>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{job.provider}</TableCell>
+                      <TableCell className="text-sm">{job.retryCount}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{job.updatedAt}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
 
-        <div className="two-column">
-          <button type="button" className="primary-button" disabled={!hasReviewOverrides || savingReview} onClick={() => void handleSaveReview()}>
-            {savingReview ? 'Saving...' : 'Save Review'}
-          </button>
-          <button type="button" className="primary-button" disabled={retryingJob || !detail || detail.status === 'processing'} onClick={handleRetry}>
-            {retryingJob ? 'Retrying...' : 'Retry OCR'}
-          </button>
-        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Status</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div>
+              <p className="text-sm text-muted-foreground">Unresolved Lines</p>
+              <p className="text-2xl font-bold text-orange-600">{unresolvedLineCount}</p>
+            </div>
+            <Separator />
+            <div>
+              <p className="text-sm text-muted-foreground">Unconfirmed Lines</p>
+              <p className="text-2xl font-bold text-blue-600">{unconfirmedLineCount}</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
-        <div className="two-column">
-          <button
-            type="button"
-            className="primary-button"
-            disabled={creatingDraft || (!detail?.procurementRequestId && !canCreateDraft)}
-            onClick={handleDraftAction}
-          >
-            {creatingDraft ? 'Creating...' : detail?.procurementRequestId ? 'Open Procurement Draft' : 'Create Procurement Draft'}
-          </button>
-          <span>
-            {detail?.procurementRequestId
-              ? 'This OCR job is already linked to a procurement draft.'
-              : canCreateDraft
-                ? 'All lines are resolved and user-confirmed, so the draft can be created.'
-                : 'Resolve every line, save review values, and mark all lines as user-confirmed before creating a draft.'}
-          </span>
-        </div>
-
-        {reviewError ? <p className="muted-copy">{reviewError}</p> : null}
-        {draftError ? <p className="muted-copy">{draftError}</p> : null}
-
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Manufacturer</th>
-              <th>Item No.</th>
-              <th>Matched item</th>
-              <th>Description</th>
-              <th>Qty</th>
-              <th>Lead time</th>
-            </tr>
-          </thead>
-          <tbody>
-            {currentLines.map((line) => (
-              <tr key={line.id}>
-                <td>{line.manufacturerName}</td>
-                <td>{line.itemNumber}</td>
-                <td>
-                  {line.matchCandidates[0]
-                    ? `${line.matchCandidates[0].canonicalItemNumber} (${Math.round(line.matchCandidates[0].score * 100)}%)`
-                    : line.itemId || '-'}
-                </td>
-                <td>{line.itemDescription}</td>
-                <td>{line.quantity}</td>
-                <td>{line.leadTimeDays} days</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        <div className="stack-form">
-          {currentLines.map((line) => {
-            const assist = assistByLine[line.id]
-            const registerDraft = draftByLine[line.id] ?? defaultRegisterDraft(line, currentHeader?.supplierId ?? '')
-            const categoryOptions = masterData?.categories ?? []
-            return (
-              <div key={`${line.id}-actions`}>
-                <strong>{line.itemNumber || line.id}</strong>
-                <div>
-                  {line.matchCandidates.slice(0, 3).map((candidate) => `${candidate.canonicalItemNumber} / ${candidate.matchReason}`).join(' | ') ||
-                    'No deterministic candidates yet.'}
-                </div>
-                <div className="two-column">
-                  <button type="button" className="primary-button" disabled={busyLineId === line.id} onClick={() => handleAssist(line)}>
-                    {busyLineId === line.id ? 'Working...' : 'LLM Assist'}
-                  </button>
-                  <span>{assist ? `${Math.round(assist.confidence * 100)}% / ${assist.rationale}` : 'Use Vertex AI only for unresolved lines.'}</span>
-                </div>
-                <div className="two-column">
-                  <label>
-                    <span>Resolved item</span>
-                    <select value={line.itemId} onChange={(event) => updateReviewLine(line.id, { itemId: event.target.value })}>
-                      <option value="">Unresolved</option>
-                      {buildItemOptions(line).map((option) => (
-                        <option key={option.value || `empty-${line.id}`} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    <span>User confirmed</span>
-                    <input
-                      type="checkbox"
-                      checked={line.isUserConfirmed}
-                      onChange={(event) => updateReviewLine(line.id, { isUserConfirmed: event.target.checked })}
-                    />
-                  </label>
-                </div>
-                <div className="two-column">
-                  <label>
-                    <span>Delivery location</span>
-                    <input value={line.deliveryLocation} onChange={(event) => updateReviewLine(line.id, { deliveryLocation: event.target.value })} />
-                  </label>
-                  <label>
-                    <span>Budget category</span>
-                    <select value={line.budgetCategoryId} onChange={(event) => updateReviewLine(line.id, { budgetCategoryId: event.target.value })}>
-                      <option value="">Unassigned</option>
-                      {budgetCategories?.map((category) => (
-                        <option key={category.id} value={category.id}>
-                          {category.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <div className="two-column">
-                  <label>
-                    <span>Accounting category</span>
-                    <input value={line.accountingCategory} onChange={(event) => updateReviewLine(line.id, { accountingCategory: event.target.value })} />
-                  </label>
-                  <label>
-                    <span>Supplier contact</span>
-                    <input value={line.supplierContact} onChange={(event) => updateReviewLine(line.id, { supplierContact: event.target.value })} />
-                  </label>
-                </div>
-                {!line.itemId ? (
-                  <div className="stack-form">
-                    <label>
-                      <span>Canonical item number</span>
-                      <input value={registerDraft.canonicalItemNumber} onChange={(event) => updateRegisterDraft(line.id, { canonicalItemNumber: event.target.value })} />
-                    </label>
-                    <label>
-                      <span>Description</span>
-                      <input value={registerDraft.description} onChange={(event) => updateRegisterDraft(line.id, { description: event.target.value })} />
-                    </label>
-                    <label>
-                      <span>Manufacturer</span>
-                      <input value={registerDraft.manufacturerName} onChange={(event) => updateRegisterDraft(line.id, { manufacturerName: event.target.value })} />
-                    </label>
-                    <label>
-                      <span>Category</span>
-                      <select
-                        value={registerDraft.categoryKey}
-                        onChange={(event) =>
-                          updateRegisterDraft(line.id, {
-                            categoryKey: event.target.value,
-                            categoryName: categoryOptions.find((category) => category.key === event.target.value)?.name || event.target.value,
-                          })
-                        }
-                      >
-                        {categoryOptions.map((category) => (
-                          <option key={category.key} value={category.key}>
-                            {category.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      <span>Supplier alias</span>
-                      <input value={registerDraft.supplierAliasNumber} onChange={(event) => updateRegisterDraft(line.id, { supplierAliasNumber: event.target.value })} />
-                    </label>
-                    <label>
-                      <span>Units per order</span>
-                      <input
-                        type="number"
-                        min={1}
-                        value={registerDraft.unitsPerOrder}
-                        onChange={(event) => updateRegisterDraft(line.id, { unitsPerOrder: Number(event.target.value) || 1 })}
-                      />
-                    </label>
-                    <button type="button" className="primary-button" disabled={busyLineId === line.id} onClick={() => handleRegister(line.id)}>
-                      Register as New Item
-                    </button>
-                  </div>
-                ) : (
-                  <div>Resolved to {line.itemId}</div>
-                )}
+      {detail && (
+        <Card>
+          <CardHeader>
+            <CardTitle>OCR Review</CardTitle>
+            <CardDescription>Review and resolve OCR extraction results</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid grid-cols-2 gap-4 p-4 bg-muted rounded-lg">
+              <div>
+                <p className="text-sm text-muted-foreground">Supplier (OCR)</p>
+                <p className="font-medium">{detail.supplierName || '-'}</p>
               </div>
-            )
-          })}
-        </div>
-      </SectionCard>
+              <div>
+                <p className="text-sm text-muted-foreground">Supplier (Matched)</p>
+                <p className="font-medium">
+                  {detail.supplierMatch?.[0]
+                    ? `${detail.supplierMatch[0].name} (${Math.round(detail.supplierMatch[0].score * 100)}%)`
+                    : detail.supplierId || '-'}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Linked Request</p>
+                <p className="font-medium">{detail.procurementBatchNumber || detail.procurementRequestId || '-'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Retry Count</p>
+                <p className="font-medium">{detail.retryCount ?? 0}</p>
+              </div>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-4">
+              <h3 className="font-semibold">Header Information</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="supplier">Supplier</Label>
+                  <Select value={currentHeader?.supplierId ?? ''} onValueChange={(value) => updateReviewHeader({ supplierId: value })}>
+                    <SelectTrigger id="supplier">
+                      <SelectValue placeholder="Select supplier" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">Unmatched</SelectItem>
+                      {dedupeSuppliers(detail, masterData).map((supplier) => (
+                        <SelectItem key={supplier.id} value={supplier.id}>
+                          {supplier.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="quotation">Quotation Number</Label>
+                  <Input
+                    id="quotation"
+                    value={currentHeader?.quotationNumber ?? ''}
+                    onChange={(event) => updateReviewHeader({ quotationNumber: event.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="issue-date">Issue Date</Label>
+                  <Input
+                    id="issue-date"
+                    value={currentHeader?.issueDate ?? ''}
+                    onChange={(event) => updateReviewHeader({ issueDate: event.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="error">OCR Error</Label>
+                  <Input id="error" value={detail.errorMessage ?? ''} disabled />
+                </div>
+              </div>
+            </div>
+
+            <Separator />
+
+            <div className="flex gap-2">
+              <Button
+                onClick={() => void handleSaveReview()}
+                disabled={!hasReviewOverrides || savingReview}
+              >
+                {savingReview ? 'Saving...' : 'Save Review'}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleRetry}
+                disabled={retryingJob || detail.status === 'processing'}
+              >
+                {retryingJob ? 'Retrying...' : 'Retry OCR'}
+              </Button>
+              <Button
+                onClick={handleDraftAction}
+                disabled={creatingDraft || (!detail.procurementRequestId && !canCreateDraft)}
+              >
+                {creatingDraft ? 'Creating...' : detail.procurementRequestId ? 'Open Procurement Draft' : 'Create Procurement Draft'}
+              </Button>
+            </div>
+
+            {reviewError && <p className="text-sm text-destructive">{reviewError}</p>}
+            {draftError && <p className="text-sm text-destructive">{draftError}</p>}
+
+            <Separator />
+
+            <div className="space-y-4">
+              <h3 className="font-semibold">Lines ({currentLines.length})</h3>
+              <div className="border rounded-lg overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Manufacturer</TableHead>
+                      <TableHead>Item No.</TableHead>
+                      <TableHead>Matched Item</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead>Qty</TableHead>
+                      <TableHead>Lead Time</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {currentLines.map((line) => (
+                      <TableRow key={line.id}>
+                        <TableCell className="text-sm">{line.manufacturerName}</TableCell>
+                        <TableCell className="font-mono text-sm">{line.itemNumber}</TableCell>
+                        <TableCell>
+                          {line.matchCandidates[0]
+                            ? `${line.matchCandidates[0].canonicalItemNumber} (${Math.round(line.matchCandidates[0].score * 100)}%)`
+                            : line.itemId || '-'}
+                        </TableCell>
+                        <TableCell className="text-sm">{line.itemDescription}</TableCell>
+                        <TableCell className="text-sm">{line.quantity}</TableCell>
+                        <TableCell className="text-sm">{line.leadTimeDays} days</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-6">
+              <h3 className="font-semibold">Line Details</h3>
+              {currentLines.map((line) => {
+                const assist = assistByLine[line.id]
+                const registerDraft = draftByLine[line.id] ?? defaultRegisterDraft(line, currentHeader?.supplierId ?? '')
+                const categoryOptions = masterData?.categories ?? []
+                return (
+                  <Card key={`${line.id}-detail`} className="border">
+                    <CardHeader>
+                      <CardTitle className="text-base">{line.itemNumber || line.id}</CardTitle>
+                      <CardDescription>
+                        {line.matchCandidates.slice(0, 2).map((c) => `${c.canonicalItemNumber} (${Math.round(c.score * 100)}%)`).join(' • ') ||
+                          'No deterministic candidates'}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor={`item-${line.id}`}>Resolved Item</Label>
+                          <Select value={line.itemId} onValueChange={(value) => updateReviewLine(line.id, { itemId: value })}>
+                            <SelectTrigger id={`item-${line.id}`}>
+                              <SelectValue placeholder="Unresolved" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="">Unresolved</SelectItem>
+                              {buildItemOptions(line).map((option) => (
+                                <SelectItem key={option.value || `empty-${line.id}`} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex items-end">
+                          <label className="flex items-center space-x-2">
+                            <Checkbox
+                              checked={line.isUserConfirmed}
+                              onCheckedChange={(checked) =>
+                                updateReviewLine(line.id, { isUserConfirmed: checked === true })
+                              }
+                            />
+                            <span className="text-sm">User Confirmed</span>
+                          </label>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor={`location-${line.id}`}>Delivery Location</Label>
+                          <Input
+                            id={`location-${line.id}`}
+                            value={line.deliveryLocation}
+                            onChange={(event) => updateReviewLine(line.id, { deliveryLocation: event.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor={`budget-${line.id}`}>Budget Category</Label>
+                          <Select value={line.budgetCategoryId} onValueChange={(value) => updateReviewLine(line.id, { budgetCategoryId: value })}>
+                            <SelectTrigger id={`budget-${line.id}`}>
+                              <SelectValue placeholder="Unassigned" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="">Unassigned</SelectItem>
+                              {budgetCategories?.map((category) => (
+                                <SelectItem key={category.id} value={category.id}>
+                                  {category.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor={`accounting-${line.id}`}>Accounting Category</Label>
+                          <Input
+                            id={`accounting-${line.id}`}
+                            value={line.accountingCategory}
+                            onChange={(event) => updateReviewLine(line.id, { accountingCategory: event.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor={`contact-${line.id}`}>Supplier Contact</Label>
+                          <Input
+                            id={`contact-${line.id}`}
+                            value={line.supplierContact}
+                            onChange={(event) => updateReviewLine(line.id, { supplierContact: event.target.value })}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="pt-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => handleAssist(line)}
+                          disabled={busyLineId === line.id}
+                          className="w-full"
+                        >
+                          {busyLineId === line.id ? 'Working...' : 'LLM Assist'}
+                        </Button>
+                        {assist && (
+                          <p className="text-sm text-muted-foreground mt-2">
+                            {Math.round(assist.confidence * 100)}% confidence - {assist.rationale}
+                          </p>
+                        )}
+                      </div>
+
+                      {!line.itemId && (
+                        <>
+                          <Separator />
+                          <div className="space-y-4">
+                            <h4 className="font-medium">Register as New Item</h4>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <Label htmlFor={`canon-${line.id}`}>Canonical Item Number</Label>
+                                <Input
+                                  id={`canon-${line.id}`}
+                                  value={registerDraft.canonicalItemNumber}
+                                  onChange={(event) =>
+                                    updateRegisterDraft(line.id, { canonicalItemNumber: event.target.value })
+                                  }
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor={`desc-${line.id}`}>Description</Label>
+                                <Input
+                                  id={`desc-${line.id}`}
+                                  value={registerDraft.description}
+                                  onChange={(event) => updateRegisterDraft(line.id, { description: event.target.value })}
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor={`mfg-${line.id}`}>Manufacturer</Label>
+                                <Input
+                                  id={`mfg-${line.id}`}
+                                  value={registerDraft.manufacturerName}
+                                  onChange={(event) =>
+                                    updateRegisterDraft(line.id, { manufacturerName: event.target.value })
+                                  }
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor={`cat-${line.id}`}>Category</Label>
+                                <Select
+                                  value={registerDraft.categoryKey}
+                                  onValueChange={(value) =>
+                                    updateRegisterDraft(line.id, {
+                                      categoryKey: value,
+                                      categoryName: categoryOptions.find((c) => c.key === value)?.name || value,
+                                    })
+                                  }
+                                >
+                                  <SelectTrigger id={`cat-${line.id}`}>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {categoryOptions.map((category) => (
+                                      <SelectItem key={category.key} value={category.key}>
+                                        {category.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor={`alias-${line.id}`}>Supplier Alias</Label>
+                                <Input
+                                  id={`alias-${line.id}`}
+                                  value={registerDraft.supplierAliasNumber}
+                                  onChange={(event) =>
+                                    updateRegisterDraft(line.id, { supplierAliasNumber: event.target.value })
+                                  }
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor={`upo-${line.id}`}>Units per Order</Label>
+                                <Input
+                                  id={`upo-${line.id}`}
+                                  type="number"
+                                  min={1}
+                                  value={registerDraft.unitsPerOrder}
+                                  onChange={(event) =>
+                                    updateRegisterDraft(line.id, { unitsPerOrder: Number(event.target.value) || 1 })
+                                  }
+                                />
+                              </div>
+                            </div>
+                            <Button
+                              onClick={() => handleRegister(line.id)}
+                              disabled={busyLineId === line.id}
+                              className="w-full"
+                            >
+                              Register as New Item
+                            </Button>
+                          </div>
+                        </>
+                      )}
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

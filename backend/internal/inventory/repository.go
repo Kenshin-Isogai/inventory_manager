@@ -27,7 +27,7 @@ func (r *Repository) Dashboard(ctx context.Context) (DashboardData, error) {
 		WITH reservation_totals AS (
 			SELECT item_id, SUM(quantity) AS reserved_quantity
 			FROM reservations
-			WHERE status IN ('reserved', 'partially_allocated', 'awaiting_stock')
+			WHERE status IN ('requested', 'reserved', 'allocated', 'partially_allocated', 'awaiting_stock')
 			GROUP BY item_id
 		),
 		inventory_totals AS (
@@ -45,7 +45,7 @@ func (r *Repository) Dashboard(ctx context.Context) (DashboardData, error) {
 
 	var reservationCount int
 	if err := r.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM reservations WHERE status IN ('reserved', 'partially_allocated', 'awaiting_stock')
+		SELECT COUNT(*) FROM reservations WHERE status IN ('requested', 'reserved', 'allocated', 'partially_allocated', 'awaiting_stock')
 	`).Scan(&reservationCount); err != nil {
 		return DashboardData{}, fmt.Errorf("query reservation count: %w", err)
 	}
@@ -133,7 +133,7 @@ func (r *Repository) InventoryOverview(ctx context.Context) (InventoryOverview, 
 		reservation_totals AS (
 			SELECT item_id, SUM(quantity) AS reserved_quantity
 			FROM reservations
-			WHERE status IN ('reserved', 'partially_allocated', 'awaiting_stock')
+			WHERE status IN ('requested', 'reserved', 'allocated', 'partially_allocated', 'awaiting_stock')
 			GROUP BY item_id
 		)
 		SELECT
@@ -189,7 +189,7 @@ func (r *Repository) Shortages(ctx context.Context, device, scope string) (Short
 				SUM(r.quantity) AS reserved_quantity
 			FROM reservations r
 			JOIN device_scopes ds ON ds.id = r.device_scope_id
-			WHERE r.status IN ('reserved', 'partially_allocated', 'awaiting_stock')
+			WHERE r.status IN ('requested', 'reserved', 'allocated', 'partially_allocated', 'awaiting_stock')
 			  AND ($1 = '' OR ds.device_key = $1)
 			  AND ($2 = '' OR ds.scope_key = $2)
 			GROUP BY r.item_id, ds.device_key, ds.scope_key
@@ -781,37 +781,89 @@ func parsePositiveInt(raw string, fallback int) int {
 }
 
 func (r *Repository) CreateReservation(ctx context.Context, input ReservationCreateInput) error {
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO reservations (id, item_id, device_scope_id, quantity, status, requested_by, note)
-		VALUES ($1, $2, $3, $4, 'reserved', $5, $6)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin reservation tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	id := fmt.Sprintf("res-%d", time.Now().UnixNano())
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO reservations (
+			id, item_id, device_scope_id, quantity, status, requested_by, note, purpose, priority,
+			needed_by_at, planned_use_at, hold_until_at, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, 'requested', $5, $6, $7, $8, NULLIF($9, '')::timestamptz, NULLIF($10, '')::timestamptz, NULLIF($11, '')::timestamptz, NOW(), NOW())
 	`,
-		fmt.Sprintf("res-%d", time.Now().UnixNano()),
+		id,
 		input.ItemID,
 		input.DeviceScopeID,
 		input.Quantity,
 		emptyDefault(input.RequestedBy, "local-user"),
 		input.Note,
-	)
-	if err != nil {
+		input.Purpose,
+		defaultString(input.Priority, "normal"),
+		input.NeededByAt,
+		input.PlannedUseAt,
+		input.HoldUntilAt,
+	); err != nil {
 		return fmt.Errorf("insert reservation: %w", err)
+	}
+	if err := r.recordReservationEventTx(ctx, tx, id, "requested", input.Quantity, input.RequestedBy, map[string]any{
+		"note": input.Note,
+	}); err != nil {
+		return err
+	}
+	if err := recordAuditEventTx(ctx, tx, input.RequestedBy, "reservation.created", "reservation", id, map[string]any{
+		"itemId":   input.ItemID,
+		"scopeId":  input.DeviceScopeID,
+		"quantity": input.Quantity,
+	}); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit reservation tx: %w", err)
 	}
 	return nil
 }
 
 func (r *Repository) AdjustInventory(ctx context.Context, input InventoryAdjustInput) error {
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO inventory_events (id, item_id, location_code, event_type, quantity_delta, note, device_scope_id)
-		VALUES ($1, $2, $3, 'adjust', $4, $5, NULLIF($6, ''))
-	`,
-		fmt.Sprintf("evt-%d", time.Now().UnixNano()),
-		input.ItemID,
-		input.LocationCode,
-		input.QuantityDelta,
-		input.Note,
-		input.DeviceScopeID,
-	)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("insert inventory event: %w", err)
+		return fmt.Errorf("begin inventory adjustment tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if input.QuantityDelta > 0 {
+		if err := incrementBalanceTx(ctx, tx, input.ItemID, input.LocationCode, input.QuantityDelta); err != nil {
+			return err
+		}
+	} else {
+		if err := decrementBalanceTx(ctx, tx, input.ItemID, input.LocationCode, -input.QuantityDelta); err != nil {
+			return err
+		}
+	}
+	if _, err := insertInventoryEventTx(ctx, tx, inventoryEventInsert{
+		ItemID:           input.ItemID,
+		LocationCode:     input.LocationCode,
+		FromLocationCode: input.LocationCode,
+		ToLocationCode:   input.LocationCode,
+		EventType:        "adjust",
+		QuantityDelta:    input.QuantityDelta,
+		DeviceScopeID:    input.DeviceScopeID,
+		SourceType:       "manual",
+		Note:             input.Note,
+	}); err != nil {
+		return err
+	}
+	if err := recordAuditEventTx(ctx, tx, "", "inventory.adjusted", "item", input.ItemID, map[string]any{
+		"locationCode":  input.LocationCode,
+		"quantityDelta": input.QuantityDelta,
+	}); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit inventory adjustment tx: %w", err)
 	}
 	return nil
 }

@@ -40,6 +40,54 @@ func (s *Service) RequestDetail(ctx context.Context, id string) (ProcurementRequ
 	return s.repo.RequestDetail(ctx, id)
 }
 
+func (s *Service) Orders(ctx context.Context) (PurchaseOrderList, error) {
+	return s.repo.Orders(ctx)
+}
+
+func (s *Service) OrderDetail(ctx context.Context, id string) (PurchaseOrderDetail, error) {
+	if id == "" {
+		return PurchaseOrderDetail{}, fmt.Errorf("order id is required")
+	}
+	return s.repo.OrderDetail(ctx, id)
+}
+
+func (s *Service) CreateOrder(ctx context.Context, input PurchaseOrderCreateInput) (PurchaseOrderDetail, error) {
+	if input.ProcurementBatchID == "" {
+		return PurchaseOrderDetail{}, fmt.Errorf("procurementBatchId is required")
+	}
+	if len(input.Lines) == 0 {
+		return PurchaseOrderDetail{}, fmt.Errorf("at least one purchase order line is required")
+	}
+	for _, line := range input.Lines {
+		if line.ProcurementLineID == "" || line.OrderedQuantity <= 0 {
+			return PurchaseOrderDetail{}, fmt.Errorf("procurementLineId and positive orderedQuantity are required")
+		}
+	}
+	return s.repo.CreateOrder(ctx, input)
+}
+
+func (s *Service) UpdateOrder(ctx context.Context, id string, input PurchaseOrderUpdateInput) (PurchaseOrderDetail, error) {
+	if id == "" {
+		return PurchaseOrderDetail{}, fmt.Errorf("order id is required")
+	}
+	if len(input.Lines) == 0 {
+		return PurchaseOrderDetail{}, fmt.Errorf("at least one purchase order line is required")
+	}
+	for _, line := range input.Lines {
+		if line.ProcurementLineID == "" || line.OrderedQuantity <= 0 {
+			return PurchaseOrderDetail{}, fmt.Errorf("procurementLineId and positive orderedQuantity are required")
+		}
+	}
+	return s.repo.UpdateOrder(ctx, id, input)
+}
+
+func (s *Service) DeleteOrder(ctx context.Context, id string) error {
+	if id == "" {
+		return fmt.Errorf("order id is required")
+	}
+	return s.repo.DeleteOrder(ctx, id)
+}
+
 func (s *Service) CreateRequest(ctx context.Context, input ProcurementRequestCreateInput) (string, error) {
 	if input.Title == "" {
 		return "", fmt.Errorf("title is required")
@@ -53,6 +101,24 @@ func (s *Service) CreateRequest(ctx context.Context, input ProcurementRequestCre
 		}
 	}
 	return s.repo.CreateRequest(ctx, input)
+}
+
+func (s *Service) UpdateRequest(ctx context.Context, id string, input ProcurementRequestUpdateInput) (ProcurementRequestDetail, error) {
+	if id == "" {
+		return ProcurementRequestDetail{}, fmt.Errorf("request id is required")
+	}
+	if strings.TrimSpace(input.Title) == "" {
+		return ProcurementRequestDetail{}, fmt.Errorf("title is required")
+	}
+	if len(input.Lines) == 0 {
+		return ProcurementRequestDetail{}, fmt.Errorf("at least one procurement line is required")
+	}
+	for _, line := range input.Lines {
+		if line.RequestedQuantity <= 0 {
+			return ProcurementRequestDetail{}, fmt.Errorf("requestedQuantity must be positive")
+		}
+	}
+	return s.repo.UpdateRequest(ctx, id, input)
 }
 
 func (s *Service) CreateDraftFromOCR(ctx context.Context, input OCRProcurementDraftCreateInput) (OCRProcurementDraftCreateResult, error) {

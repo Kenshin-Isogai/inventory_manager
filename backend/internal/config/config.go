@@ -107,8 +107,8 @@ func Load() (Config, error) {
 			BucketName: getEnv("CLOUD_STORAGE_BUCKET", ""),
 		},
 		Auth: AuthConfig{
-			Mode:                 getEnv("AUTH_MODE", "none"),
-			RBAC:                 getEnv("RBAC_MODE", "dry_run"),
+			Mode:                 normalizeAuthMode(getEnv("AUTH_MODE", "none")),
+			RBAC:                 normalizeRBACMode(getEnv("RBAC_MODE", "dry_run")),
 			Verifier:             getEnv("JWT_VERIFIER", getEnv("AUTH_PROVIDER", "local")),
 			LocalTokenSpec:       getEnv("LOCAL_AUTH_TOKENS", ""),
 			ExpectedIssuer:       getEnv("OIDC_EXPECTED_ISSUER", getEnv("JWT_ISSUER", "")),
@@ -221,6 +221,28 @@ func getBoolEnv(key string, fallback bool) bool {
 		return fallback
 	default:
 		return fallback
+	}
+}
+
+func normalizeAuthMode(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "oidc_dry_run":
+		return "dry_run"
+	case "oidc_enforced":
+		return "enforced"
+	default:
+		return strings.TrimSpace(strings.ToLower(value))
+	}
+}
+
+func normalizeRBACMode(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "rbac_dry_run":
+		return "dry_run"
+	case "rbac_enforced":
+		return "enforced"
+	default:
+		return strings.TrimSpace(strings.ToLower(value))
 	}
 }
 

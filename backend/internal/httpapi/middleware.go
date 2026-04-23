@@ -1,13 +1,38 @@
 package httpapi
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"slices"
 	"strings"
 	"time"
+
+	"backend/internal/auth"
+
+	"github.com/google/uuid"
 )
+
+type requestIDContextKey string
+
+const requestIDKey requestIDContextKey = "http.request_id"
+
+func WithRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
+		if requestID == "" {
+			requestID = uuid.NewString()
+		}
+		w.Header().Set("X-Request-Id", requestID)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey, requestID)))
+	})
+}
+
+func requestIDFromContext(ctx context.Context) string {
+	requestID, _ := ctx.Value(requestIDKey).(string)
+	return requestID
+}
 
 func WithRecover(next http.Handler, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -30,11 +55,14 @@ func WithAccessLog(next http.Handler, logger *slog.Logger) http.Handler {
 		recorder := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(recorder, r)
 
+		principal := auth.PrincipalFromContext(r.Context())
 		logger.Info("request handled",
+			slog.String("request_id", requestIDFromContext(r.Context())),
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),
 			slog.Int("status_code", recorder.statusCode),
 			slog.Duration("duration", time.Since(startedAt)),
+			slog.String("user_id", principal.UserID),
 		)
 	})
 }
