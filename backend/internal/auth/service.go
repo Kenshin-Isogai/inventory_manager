@@ -321,7 +321,7 @@ type userRow struct {
 	Email           string
 	DisplayName     string
 	Status          string
-	Roles           []string
+	Roles           stringSlice
 	Provider        string
 	Subject         string
 	RequestedRole   string
@@ -330,6 +330,50 @@ type userRow struct {
 	LastLoginAt     sql.NullTime
 	UpdatedAt       time.Time
 	RejectionReason string
+}
+
+type stringSlice []string
+
+func (s *stringSlice) Scan(src any) error {
+	switch value := src.(type) {
+	case nil:
+		*s = []string{}
+		return nil
+	case []string:
+		*s = append((*s)[:0], value...)
+		return nil
+	case string:
+		*s = parseStringSlice(value)
+		return nil
+	case []byte:
+		*s = parseStringSlice(string(value))
+		return nil
+	default:
+		return fmt.Errorf("unsupported Scan, storing driver.Value type %T into type *[]string", src)
+	}
+}
+
+func parseStringSlice(raw string) []string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "{}" {
+		return []string{}
+	}
+	if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") {
+		trimmed = strings.TrimPrefix(strings.TrimSuffix(trimmed, "}"), "{")
+		if strings.TrimSpace(trimmed) == "" {
+			return []string{}
+		}
+		parts := strings.Split(trimmed, ",")
+		result := make([]string, 0, len(parts))
+		for _, part := range parts {
+			item := strings.Trim(strings.TrimSpace(part), "\"")
+			if item != "" {
+				result = append(result, item)
+			}
+		}
+		return result
+	}
+	return []string{trimmed}
 }
 
 func (r *Repository) FindUser(ctx context.Context, provider, subject, email string) (UserSummary, error) {
