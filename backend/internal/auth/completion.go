@@ -14,7 +14,7 @@ type RolePermissionUpdateInput struct {
 }
 
 func (s *Service) BootstrapRegister(ctx context.Context, input RegistrationInput) (UserSummary, error) {
-	hasActiveUsers, err := s.repo.HasActiveUsers(ctx)
+	hasActiveUsers, err := s.hasBlockingActiveUsers(ctx)
 	if err != nil {
 		return UserSummary{}, err
 	}

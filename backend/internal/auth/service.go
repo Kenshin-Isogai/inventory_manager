@@ -125,6 +125,16 @@ func NewService(cfg config.AuthConfig, repo *Repository) (*Service, error) {
 	return &Service{cfg: cfg, repo: repo, verifier: verifier}, nil
 }
 
+func (s *Service) hasBlockingActiveUsers(ctx context.Context) (bool, error) {
+	if s.repo == nil {
+		return false, nil
+	}
+	if s.cfg.Verifier == "jwks" || s.cfg.Verifier == "oidc" {
+		return s.repo.HasActiveUsersExcludingLocalSeeds(ctx)
+	}
+	return s.repo.HasActiveUsers(ctx)
+}
+
 func (s *Service) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/api/") {
@@ -132,7 +142,7 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		if r.Method == http.MethodPost && r.URL.Path == "/api/users" && s.repo != nil {
-			hasActiveUsers, err := s.repo.HasActiveUsers(r.Context())
+			hasActiveUsers, err := s.hasBlockingActiveUsers(r.Context())
 			if err == nil && !hasActiveUsers {
 				next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), Principal{Authenticated: false, Status: "bootstrap"})))
 				return
@@ -258,7 +268,7 @@ func (s *Service) Register(ctx context.Context, principal Principal, input Regis
 	if err != nil {
 		return UserSummary{}, err
 	}
-	hasActiveUsers, err := s.repo.HasActiveUsers(ctx)
+	hasActiveUsers, err := s.hasBlockingActiveUsers(ctx)
 	if err != nil {
 		return UserSummary{}, err
 	}
@@ -492,6 +502,24 @@ func (r *Repository) HasActiveUsers(ctx context.Context) (bool, error) {
 	var exists bool
 	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM app_users WHERE status = 'active')`).Scan(&exists); err != nil {
 		return false, fmt.Errorf("check active users: %w", err)
+	}
+	return exists, nil
+}
+
+func (r *Repository) HasActiveUsersExcludingLocalSeeds(ctx context.Context) (bool, error) {
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM app_users
+			WHERE status = 'active'
+			  AND NOT (
+				identity_provider = 'local'
+				AND identity_subject IN ('seed-admin', 'seed-operator', 'seed-inventory', 'seed-procurement', 'seed-inspector')
+			  )
+		)
+	`).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check active users excluding local seeds: %w", err)
 	}
 	return exists, nil
 }
