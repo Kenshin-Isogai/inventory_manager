@@ -50,10 +50,11 @@ The script starts PostgreSQL, runs backend migrations, and opens backend/fronten
 Initial Cloud Run bootstrap is separated from normal deploys:
 
 1. `.\bootstrap-cloud-run.ps1 -ProjectId <gcp-project-id>`
-2. add first versions for `DATABASE_URL` and `PROCUREMENT_WEBHOOK_SECRET`
+2. add first versions for the database secret named by `DATABASE_URL_SECRET_NAME` and for `PROCUREMENT_WEBHOOK_SECRET`
 3. configure the GitHub repository variables/secrets printed by the script
-4. run the deploy workflow to publish frontend/backend images and services
-5. run `.\run-cloud-migrations.ps1 -ProjectId <gcp-project-id> -ImageTag <backend-image-tag>`
+4. grant runtime service-account roles for Cloud SQL, Cloud Storage, and Vertex AI as needed
+5. run the deploy workflow to publish frontend/backend images and services
+6. if needed, run `.\run-cloud-migrations.ps1 -ProjectId <gcp-project-id> -ImageTag <backend-image-tag>`
 
 The backend image now contains both `/app/server` and `/app/migrate`, so schema bootstrap can run as a dedicated Cloud Run Job instead of at service startup.
 
@@ -67,3 +68,5 @@ For Identity Platform production auth, configure:
 - Frontend and backend are deployed as separate services
 - Cloud Run is the target runtime
 - GitHub Actions is the CI/CD entrypoint
+- backend, frontend, and migration job each use an explicit Cloud Run service account
+- deploy workflow supports `backend`, `frontend`, and `full` targets via `workflow_dispatch`
