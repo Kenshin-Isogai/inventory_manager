@@ -132,8 +132,12 @@ jobs:
           if [[ -n "${{ vars.GEMINI_MODEL }}" ]]; then
             BACKEND_ENV_VARS="${BACKEND_ENV_VARS},GEMINI_MODEL=${{ vars.GEMINI_MODEL }}"
           fi
-          if [[ -n "${{ vars.FRONTEND_PUBLIC_URL }}" ]]; then
-            BACKEND_ENV_VARS="${BACKEND_ENV_VARS},ALLOWED_ORIGINS=${{ vars.FRONTEND_PUBLIC_URL }}"
+          FRONTEND_ORIGIN="${{ vars.FRONTEND_PUBLIC_URL }}"
+          if [[ -z "${FRONTEND_ORIGIN}" ]]; then
+            FRONTEND_ORIGIN="$(gcloud run services describe "${{ vars.CLOUD_RUN_FRONTEND_SERVICE }}" --region "${{ vars.GCP_REGION }}" --format='value(status.url)' 2>/dev/null || true)"
+          fi
+          if [[ -n "${FRONTEND_ORIGIN}" ]]; then
+            BACKEND_ENV_VARS="${BACKEND_ENV_VARS},ALLOWED_ORIGINS=${FRONTEND_ORIGIN}"
           fi
           BACKEND_ARGS=(
             run deploy "${{ vars.CLOUD_RUN_BACKEND_SERVICE }}"
