@@ -135,21 +135,20 @@ jobs:
           if [[ -n "${{ vars.FRONTEND_PUBLIC_URL }}" ]]; then
             BACKEND_ENV_VARS="${BACKEND_ENV_VARS},ALLOWED_ORIGINS=${{ vars.FRONTEND_PUBLIC_URL }}"
           fi
-          gcloud run deploy "${{ vars.CLOUD_RUN_BACKEND_SERVICE }}" \
-            --image "$GAR_IMAGE_BACKEND:${IMAGE_TAG}" \
-            --region "${{ vars.GCP_REGION }}" \
-            --platform managed \
-            --service-account "${{ secrets.BACKEND_RUNTIME_SERVICE_ACCOUNT }}" \
-            --allow-unauthenticated \
-            --set-env-vars "$BACKEND_ENV_VARS" \
+          BACKEND_ARGS=(
+            run deploy "${{ vars.CLOUD_RUN_BACKEND_SERVICE }}"
+            --image "$GAR_IMAGE_BACKEND:${IMAGE_TAG}"
+            --region "${{ vars.GCP_REGION }}"
+            --platform managed
+            --service-account "${{ secrets.BACKEND_RUNTIME_SERVICE_ACCOUNT }}"
+            --allow-unauthenticated
+            --set-env-vars "$BACKEND_ENV_VARS"
             --set-secrets DATABASE_URL=${{ vars.DATABASE_URL_SECRET_NAME }}:latest,PROCUREMENT_WEBHOOK_SECRET=PROCUREMENT_WEBHOOK_SECRET:latest
-
-      - name: Attach Cloud SQL to backend
-        if: ${{ (env.DEPLOY_TARGET == 'backend' || env.DEPLOY_TARGET == 'full') && vars.CLOUD_SQL_INSTANCE != '' }}
-        run: |
-          gcloud run services update "${{ vars.CLOUD_RUN_BACKEND_SERVICE }}" \
-            --region "${{ vars.GCP_REGION }}" \
-            --add-cloudsql-instances "${{ vars.CLOUD_SQL_INSTANCE }}"
+          )
+          if [[ -n "${{ vars.CLOUD_SQL_INSTANCE }}" ]]; then
+            BACKEND_ARGS+=(--set-cloudsql-instances "${{ vars.CLOUD_SQL_INSTANCE }}")
+          fi
+          gcloud "${BACKEND_ARGS[@]}"
 
       - name: Resolve backend URL
         id: backend_url
