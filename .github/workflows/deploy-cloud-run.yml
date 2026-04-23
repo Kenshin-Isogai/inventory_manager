@@ -1,9 +1,6 @@
 name: deploy-cloud-run
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       image_tag:
@@ -28,8 +25,8 @@ concurrency:
 env:
   GAR_IMAGE_FRONTEND: ${{ vars.GAR_LOCATION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GAR_REPOSITORY }}/inventory-manager-frontend
   GAR_IMAGE_BACKEND: ${{ vars.GAR_LOCATION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GAR_REPOSITORY }}/inventory-manager-backend
-  DEPLOY_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_target || 'full' }}
-  IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || github.sha }}
+  DEPLOY_TARGET: ${{ inputs.deploy_target || 'full' }}
+  IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
 
 jobs:
   deploy:

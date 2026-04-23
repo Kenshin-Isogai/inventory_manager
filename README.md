@@ -69,4 +69,4 @@ For Identity Platform production auth, configure:
 - Cloud Run is the target runtime
 - GitHub Actions is the CI/CD entrypoint
 - backend, frontend, and migration job each use an explicit Cloud Run service account
-- deploy workflow supports `backend`, `frontend`, and `full` targets via `workflow_dispatch`
+- deploy workflow is manual-only and supports `backend`, `frontend`, and `full` targets via `workflow_dispatch`

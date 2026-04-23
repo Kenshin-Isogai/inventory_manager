@@ -5,7 +5,7 @@
 - `frontend`: static SPA container on Cloud Run
 - `backend`: Go API container on Cloud Run
 - `migration job`: Cloud Run Job using the backend image with `/app/migrate up`
-- deploy trigger: `main` push or manual `workflow_dispatch`
+- deploy trigger: manual `workflow_dispatch` only
 - manual deploy targets: `backend`, `frontend`, `full`
 - deploy guardrail: run backend/frontend verification before image push and deploy
 
