@@ -118,7 +118,7 @@ func (h Handlers) UpsertAlias(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) Devices(w http.ResponseWriter, r *http.Request) {
-	if !h.requireActiveRole(w, r, "admin") {
+	if !h.requireActiveRole(w, r, "admin", "operator") {
 		return
 	}
 	data, err := h.phaseOne.Devices(r.Context())
@@ -147,7 +147,7 @@ func (h Handlers) UpsertDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) DeviceScopes(w http.ResponseWriter, r *http.Request) {
-	if !h.requireActiveRole(w, r, "admin") {
+	if !h.requireActiveRole(w, r, "admin", "operator") {
 		return
 	}
 	data, err := h.phaseOne.DeviceScopes(r.Context())
@@ -159,7 +159,7 @@ func (h Handlers) DeviceScopes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) UpsertDeviceScope(w http.ResponseWriter, r *http.Request) {
-	if !h.requireActiveRole(w, r, "admin") {
+	if !h.requireActiveRole(w, r, "admin", "operator") {
 		return
 	}
 	var input inventory.DeviceScopeUpsertInput

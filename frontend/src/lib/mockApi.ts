@@ -20,6 +20,9 @@ import type {
   OCRRetryResult,
   OCRRegisterItemInput,
   ReservationListResponse,
+  DeviceScopeListResponse,
+  DeviceScopeUpsertInput,
+  DeviceListResponse,
   ShortageListResponse,
   BudgetCategorySummary,
   MasterSyncResult,
@@ -189,6 +192,60 @@ const reservations: ReservationListResponse = {
       device: 'MK4',
       scope: 'cabinet',
       status: 'awaiting_stock',
+    },
+  ],
+}
+
+const deviceScopes: DeviceScopeListResponse = {
+  rows: [
+    {
+      id: 'ds-er2-powerboard',
+      deviceId: 'device-er2',
+      deviceKey: 'ER2',
+      scopeKey: 'powerboard',
+      scopeName: 'Power Board',
+      scopeType: 'subsystem',
+      ownerDepartmentKey: 'controls',
+      status: 'active',
+    },
+    {
+      id: 'ds-er2-optics',
+      deviceId: 'device-er2',
+      deviceKey: 'ER2',
+      scopeKey: 'optics',
+      scopeName: 'Optics',
+      scopeType: 'subsystem',
+      ownerDepartmentKey: 'optics',
+      status: 'active',
+    },
+    {
+      id: 'ds-mk4-cabinet',
+      deviceId: 'device-mk4',
+      deviceKey: 'MK4',
+      scopeKey: 'cabinet',
+      scopeName: 'Cabinet',
+      scopeType: 'subsystem',
+      ownerDepartmentKey: 'mechanical',
+      status: 'active',
+    },
+  ],
+}
+
+const devices: DeviceListResponse = {
+  rows: [
+    {
+      id: 'device-er2',
+      deviceKey: 'ER2',
+      name: 'ER2 Production Tool',
+      deviceType: 'assembly',
+      status: 'active',
+    },
+    {
+      id: 'device-mk4',
+      deviceKey: 'MK4',
+      name: 'MK4 Cabinet Tool',
+      deviceType: 'assembly',
+      status: 'active',
     },
   ],
 }
@@ -781,8 +838,73 @@ export async function fetchDashboard() {
   return fetchWithFallback<DashboardResponse>('/api/v1/operator/dashboard', dashboard, true)
 }
 
-export async function fetchReservations() {
-  return fetchWithFallback<ReservationListResponse>('/api/v1/operator/reservations', reservations, true)
+export async function fetchReservations(device?: string, scope?: string) {
+  const search = new URLSearchParams()
+  if (device) {
+    search.set('device', device)
+  }
+  if (scope) {
+    search.set('scope', scope)
+  }
+  const path = search.size > 0 ? `/api/v1/operator/reservations?${search.toString()}` : '/api/v1/operator/reservations'
+  try {
+    const response = await fetch(`${config.apiBaseUrl}${path}`, {
+      headers: authorizationHeaders(),
+    })
+    if (!response.ok) {
+      throw new Error(`request failed: ${response.status}`)
+    }
+    const payload = await response.json()
+    return payload.data as ReservationListResponse
+  } catch {
+    const filtered = reservations.rows.filter(
+      (row) => (!device || row.device === device) && (!scope || row.scope === scope),
+    )
+    return delay({ rows: filtered })
+  }
+}
+
+export async function fetchDeviceScopes() {
+  return fetchWithFallback<DeviceScopeListResponse>('/api/v1/operator/master-data/scopes', deviceScopes, true)
+}
+
+export async function fetchDevices() {
+  return fetchWithFallback<DeviceListResponse>('/api/v1/operator/master-data/devices', devices, true)
+}
+
+export async function upsertDeviceScope(input: DeviceScopeUpsertInput) {
+  try {
+    const response = await fetch(`${config.apiBaseUrl}/api/v1/operator/master-data/scopes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authorizationHeaders() },
+      body: JSON.stringify(input),
+    })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null)
+      throw new Error((payload as { error?: string } | null)?.error ?? `request failed: ${response.status}`)
+    }
+    const payload = await response.json()
+    return payload.data
+  } catch {
+    const device = devices.rows.find((row) => row.deviceKey === input.deviceKey)
+    const record = {
+      id: input.id || `ds-${input.deviceKey.toLowerCase()}-${input.scopeKey.toLowerCase()}`,
+      deviceId: input.deviceId || device?.id || `device-${input.deviceKey.toLowerCase()}`,
+      deviceKey: input.deviceKey,
+      scopeKey: input.scopeKey,
+      scopeName: input.scopeName,
+      scopeType: input.scopeType,
+      ownerDepartmentKey: input.ownerDepartmentKey,
+      status: input.status,
+    }
+    const index = deviceScopes.rows.findIndex((row) => row.id === record.id)
+    if (index >= 0) {
+      deviceScopes.rows[index] = record
+    } else {
+      deviceScopes.rows.unshift(record)
+    }
+    return delay(record)
+  }
 }
 
 export async function fetchInventoryOverview() {

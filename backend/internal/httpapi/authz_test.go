@@ -69,6 +69,7 @@ func TestAdditionalProtectedRoutesRequireAuthentication(t *testing.T) {
 	}{
 		{method: http.MethodGet, target: "/api/v1/inventory/snapshot"},
 		{method: http.MethodDelete, target: "/api/v1/operator/reservations/res-1", body: `{}`},
+		{method: http.MethodPost, target: "/api/v1/operator/master-data/scopes", body: `{"deviceKey":"ER2","scopeKey":"powerboard"}`},
 		{method: http.MethodGet, target: "/api/v1/procurement/orders"},
 		{method: http.MethodPost, target: "/api/v1/procurement/orders", body: `{"procurementBatchId":"batch-1","lines":[{"procurementLineId":"line-1","orderedQuantity":1}]}`},
 		{method: http.MethodDelete, target: "/api/v1/admin/master-data/items/item-1", body: `{}`},

@@ -1,3 +1,5 @@
+import { useSearchParams } from 'react-router-dom'
+
 import { Card, CardContent } from '@/components/ui/card'
 import {
   Table,
@@ -8,6 +10,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
+import { DeviceScopeFilters } from '@/components/context/DeviceScopeFilters'
 import { useReservations } from '@/hooks/useReservations'
 
 function getStatusBadgeVariant(status: string) {
@@ -24,16 +27,40 @@ function getStatusBadgeVariant(status: string) {
 }
 
 export function ReservationsPage() {
-  const { data } = useReservations()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const device = searchParams.get('device') ?? ''
+  const scope = searchParams.get('scope') ?? ''
+  const { data } = useReservations(device, scope)
+
+  const updateContext = (key: 'device' | 'scope', value: string) => {
+    const next = new URLSearchParams(searchParams)
+    if (value.trim() === '') {
+      next.delete(key)
+    } else {
+      next.set(key, value)
+    }
+    setSearchParams(next, { replace: true })
+  }
 
   return (
     <div className="space-y-6 p-6">
       <div className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight">Reservations</h1>
         <p className="text-muted-foreground">
-          Local read model contract for reservation visibility.
+          Reservation visibility {device || scope ? `filtered by Device: ${device || 'all'}, Scope: ${scope || 'all'}` : 'for all contexts'}.
         </p>
       </div>
+
+      <Card>
+        <CardContent className="pt-6">
+          <DeviceScopeFilters
+            device={device}
+            scope={scope}
+            onDeviceChange={(value) => updateContext('device', value)}
+            onScopeChange={(value) => updateContext('scope', value)}
+          />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardContent className="pt-6">

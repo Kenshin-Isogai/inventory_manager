@@ -95,6 +95,44 @@ export type ReservationListResponse = {
   rows: ReservationSummary[]
 }
 
+export type DeviceScopeRecord = {
+  id: string
+  deviceId: string
+  deviceKey: string
+  scopeKey: string
+  scopeName: string
+  scopeType: string
+  ownerDepartmentKey: string
+  status: string
+}
+
+export type DeviceScopeListResponse = {
+  rows: DeviceScopeRecord[]
+}
+
+export type DeviceScopeUpsertInput = {
+  id?: string
+  deviceId?: string
+  deviceKey: string
+  scopeKey: string
+  scopeName: string
+  scopeType: string
+  ownerDepartmentKey: string
+  status: string
+}
+
+export type DeviceRecord = {
+  id: string
+  deviceKey: string
+  name: string
+  deviceType: string
+  status: string
+}
+
+export type DeviceListResponse = {
+  rows: DeviceRecord[]
+}
+
 export type InventoryBalance = {
   itemId: string
   itemNumber: string

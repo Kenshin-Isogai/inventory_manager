@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useSWRConfig } from 'swr'
 import { useInventoryOverview } from '@/hooks/useInventoryOverview'
+import { useDeviceScopes } from '@/hooks/useDeviceScopes'
 import { adjustInventory } from '@/lib/mockApi'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -19,16 +20,25 @@ import { CheckCircle } from 'lucide-react'
 
 export function InventoryEventsPage() {
   const { data } = useInventoryOverview()
+  const { data: deviceScopes } = useDeviceScopes()
   const { mutate } = useSWRConfig()
 
   // Form state
   const [itemId, setItemId] = useState('item-er2')
   const [locationCode, setLocationCode] = useState('TOKYO-A1')
   const [quantityDelta, setQuantityDelta] = useState(-1)
-  const [deviceScopeId, setDeviceScopeId] = useState('ds-er2-powerboard')
+  const [deviceScopeId, setDeviceScopeId] = useState('')
   const [note, setNote] = useState('Inventory adjustment')
   const [message, setMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const activeDeviceScopes = deviceScopes?.rows.filter((row) => row.status !== 'inactive') ?? []
+
+  useEffect(() => {
+    if (!deviceScopeId && activeDeviceScopes.length > 0) {
+      setDeviceScopeId(activeDeviceScopes[0].id)
+    }
+  }, [activeDeviceScopes, deviceScopeId])
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -122,13 +132,19 @@ export function InventoryEventsPage() {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="device">Device Scope</Label>
-                      <Input
-                        id="device"
-                        value={deviceScopeId}
-                        onChange={(e) => setDeviceScopeId(e.target.value)}
-                        placeholder="e.g., ds-er2-powerboard"
-                      />
+                      <Label htmlFor="device-scope">Device Scope</Label>
+                      <Select value={deviceScopeId} onValueChange={setDeviceScopeId}>
+                        <SelectTrigger id="device-scope">
+                          <SelectValue placeholder="Select a device scope" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {activeDeviceScopes.map((row) => (
+                            <SelectItem key={row.id} value={row.id}>
+                              {row.deviceKey} / {row.scopeName || row.scopeKey}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="note">Note</Label>
@@ -213,6 +229,22 @@ export function InventoryEventsPage() {
                       onChange={(e) => setNote(e.target.value)}
                       placeholder="e.g., PO reference, batch number..."
                     />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="receive-device-scope">Device Scope</Label>
+                    <Select value={deviceScopeId} onValueChange={setDeviceScopeId}>
+                      <SelectTrigger id="receive-device-scope">
+                        <SelectValue placeholder="Select a device scope" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {activeDeviceScopes.map((row) => (
+                          <SelectItem key={row.id} value={row.id}>
+                            {row.deviceKey} / {row.scopeName || row.scopeKey}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
 

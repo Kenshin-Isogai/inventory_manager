@@ -1,8 +1,8 @@
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { ChevronRight, Menu } from 'lucide-react'
 import { routes, APP_SECTION_LABELS } from '@/lib/routes'
-import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { DeviceScopeFilters } from '@/components/context/DeviceScopeFilters'
 import { useSidebar } from './SidebarContext'
 
 const PORTAL_PATHS = ['/app/portal']
@@ -57,30 +57,13 @@ function ContextControls() {
 
   return (
     <div className="hidden sm:flex items-center gap-3">
-      <div className="flex items-center gap-1.5">
-        <label htmlFor="ctx-device" className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          Device
-        </label>
-        <Input
-          id="ctx-device"
-          value={device}
-          onChange={(e) => updateContext('device', e.target.value)}
-          placeholder="Not selected"
-          className="h-8 w-24 text-sm"
-        />
-      </div>
-      <div className="flex items-center gap-1.5">
-        <label htmlFor="ctx-scope" className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          Scope
-        </label>
-        <Input
-          id="ctx-scope"
-          value={scope}
-          onChange={(e) => updateContext('scope', e.target.value)}
-          placeholder="Not selected"
-          className="h-8 w-28 text-sm"
-        />
-      </div>
+      <DeviceScopeFilters
+        device={device}
+        scope={scope}
+        onDeviceChange={(value) => updateContext('device', value)}
+        onScopeChange={(value) => updateContext('scope', value)}
+        compact
+      />
     </div>
   )
 }
