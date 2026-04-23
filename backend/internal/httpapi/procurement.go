@@ -10,6 +10,9 @@ import (
 )
 
 func (h Handlers) ProcurementProjects(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	rows, err := h.phaseTwo.Projects(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -19,6 +22,9 @@ func (h Handlers) ProcurementProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) RefreshProcurementProjects(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	result, err := h.phaseTwo.RefreshProjects(r.Context(), "manual")
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -28,6 +34,9 @@ func (h Handlers) RefreshProcurementProjects(w http.ResponseWriter, r *http.Requ
 }
 
 func (h Handlers) ProcurementBudgetCategories(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	rows, err := h.phaseTwo.BudgetCategories(r.Context(), r.URL.Query().Get("projectId"))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -37,6 +46,9 @@ func (h Handlers) ProcurementBudgetCategories(w http.ResponseWriter, r *http.Req
 }
 
 func (h Handlers) RefreshProcurementBudgetCategories(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	result, err := h.phaseTwo.RefreshBudgetCategories(r.Context(), r.URL.Query().Get("projectId"), "manual")
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -46,6 +58,9 @@ func (h Handlers) RefreshProcurementBudgetCategories(w http.ResponseWriter, r *h
 }
 
 func (h Handlers) ProcurementSyncRuns(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	rows, err := h.phaseTwo.MasterSyncRuns(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -55,6 +70,9 @@ func (h Handlers) ProcurementSyncRuns(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) ProcurementWebhookEvents(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	rows, err := h.phaseTwo.WebhookEvents(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -64,6 +82,9 @@ func (h Handlers) ProcurementWebhookEvents(w http.ResponseWriter, r *http.Reques
 }
 
 func (h Handlers) ProcurementRequests(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	rows, err := h.phaseTwo.Requests(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -73,6 +94,9 @@ func (h Handlers) ProcurementRequests(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) ProcurementRequestDetail(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/procurement/requests/")
 	detail, err := h.phaseTwo.RequestDetail(r.Context(), id)
 	if err != nil {
@@ -83,6 +107,9 @@ func (h Handlers) ProcurementRequestDetail(w http.ResponseWriter, r *http.Reques
 }
 
 func (h Handlers) CreateProcurementRequest(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	var input procurement.ProcurementRequestCreateInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json payload"})
@@ -97,6 +124,9 @@ func (h Handlers) CreateProcurementRequest(w http.ResponseWriter, r *http.Reques
 }
 
 func (h Handlers) ReconcileProcurementRequest(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	id := r.PathValue("id")
 	result, err := h.phaseTwo.ReconcileRequest(r.Context(), id)
 	if err != nil {
@@ -107,6 +137,9 @@ func (h Handlers) ReconcileProcurementRequest(w http.ResponseWriter, r *http.Req
 }
 
 func (h Handlers) SubmitProcurementRequest(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	id := r.PathValue("id")
 	result, err := h.phaseTwo.SubmitRequest(r.Context(), id)
 	if err != nil {

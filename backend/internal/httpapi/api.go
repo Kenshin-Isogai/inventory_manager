@@ -74,16 +74,51 @@ func (h Handlers) Bootstrap(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (h Handlers) requireRole(w http.ResponseWriter, r *http.Request, role string) bool {
-	if h.auth == nil {
+func (h Handlers) requireAuthenticated(w http.ResponseWriter, r *http.Request) (auth.Principal, bool) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if h.auth == nil || h.cfg.Auth.Mode != "enforced" {
+		return principal, true
+	}
+	if !principal.Authenticated {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		return principal, false
+	}
+	return principal, true
+}
+
+func (h Handlers) requireVerifiedIdentity(w http.ResponseWriter, principal auth.Principal) bool {
+	if h.auth == nil || h.cfg.Auth.Mode != "enforced" || !h.cfg.Auth.RequireEmailVerified {
 		return true
 	}
-	principal := auth.PrincipalFromContext(r.Context())
-	if h.cfg.Auth.RBAC == "enforced" && !auth.Allowed(principal, role) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+	if !principal.EmailVerified {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "email verification is required"})
 		return false
 	}
 	return true
+}
+
+func (h Handlers) requireActiveRole(w http.ResponseWriter, r *http.Request, roles ...string) bool {
+	principal, ok := h.requireAuthenticated(w, r)
+	if !ok {
+		return false
+	}
+	if h.auth == nil || h.cfg.Auth.Mode != "enforced" {
+		return true
+	}
+	if principal.Status != "active" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "active account required"})
+		return false
+	}
+	if h.cfg.Auth.RBAC != "enforced" {
+		return true
+	}
+	for _, role := range roles {
+		if auth.Allowed(principal, role) {
+			return true
+		}
+	}
+	writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+	return false
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

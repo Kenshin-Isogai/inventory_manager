@@ -13,7 +13,13 @@ func (h Handlers) CurrentSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) RegisterUser(w http.ResponseWriter, r *http.Request) {
-	principal := auth.PrincipalFromContext(r.Context())
+	principal, ok := h.requireAuthenticated(w, r)
+	if !ok {
+		return
+	}
+	if !h.requireVerifiedIdentity(w, principal) {
+		return
+	}
 	var input auth.RegistrationInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json payload"})
@@ -28,7 +34,7 @@ func (h Handlers) RegisterUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) Users(w http.ResponseWriter, r *http.Request) {
-	if !h.requireRole(w, r, "admin") {
+	if !h.requireActiveRole(w, r, "admin") {
 		return
 	}
 	rows, err := h.auth.ListUsers(r.Context())
@@ -40,7 +46,7 @@ func (h Handlers) Users(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) Roles(w http.ResponseWriter, r *http.Request) {
-	if !h.requireRole(w, r, "admin") {
+	if !h.requireActiveRole(w, r, "admin") {
 		return
 	}
 	rows, err := h.auth.ListRoles(r.Context())
@@ -52,7 +58,7 @@ func (h Handlers) Roles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) ApproveUser(w http.ResponseWriter, r *http.Request) {
-	if !h.requireRole(w, r, "admin") {
+	if !h.requireActiveRole(w, r, "admin") {
 		return
 	}
 	var input auth.ApproveUserInput
@@ -69,7 +75,7 @@ func (h Handlers) ApproveUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) RejectUser(w http.ResponseWriter, r *http.Request) {
-	if !h.requireRole(w, r, "admin") {
+	if !h.requireActiveRole(w, r, "admin") {
 		return
 	}
 	var input auth.RejectUserInput

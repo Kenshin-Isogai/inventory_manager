@@ -4,6 +4,7 @@ import { useSWRConfig } from 'swr'
 
 import { SectionCard } from '../components/SectionCard'
 import { useAuthSession } from '../hooks/useAuthSession'
+import { defaultPathForApp } from '../lib/auth'
 import { registerUser } from '../lib/mockApi'
 
 export function RegisterPage() {
@@ -23,14 +24,15 @@ export function RegisterPage() {
           className="stack-form"
             onSubmit={async (event) => {
               event.preventDefault()
+              setError('')
               try {
-                await registerUser({ email: resolvedEmail, displayName: resolvedDisplayName })
+                const result = await registerUser({ email: resolvedEmail, displayName: resolvedDisplayName })
                 await mutate('auth-session')
                 await mutate('users')
-                navigate('/auth/pending', { replace: true })
-            } catch (caught) {
-              setError(caught instanceof Error ? caught.message : 'Failed to submit registration')
-            }
+                navigate(result.status === 'active' ? defaultPathForApp('admin') : '/auth/pending', { replace: true })
+              } catch (caught) {
+                setError(caught instanceof Error ? caught.message : 'Failed to submit registration')
+              }
           }}
           >
             <label>

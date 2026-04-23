@@ -3,6 +3,7 @@ import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useBootstrap } from '../hooks/useBootstrap'
 import { useAuthSession } from '../hooks/useAuthSession'
 import { canAccessApp, defaultPathForApp, localFallbackSession, resolveSessionUser } from '../lib/auth'
+import { isFirebaseAuthConfigured } from '../lib/firebaseAuth'
 import type { AppSection } from '../types'
 
 type AuthGateProps = {
@@ -13,7 +14,7 @@ export function AuthGate({ app }: AuthGateProps) {
   const location = useLocation()
   const { data: bootstrap } = useBootstrap()
   const { data: session } = useAuthSession()
-  const authMode = bootstrap?.authMode ?? 'none'
+  const authMode = bootstrap?.authMode ?? (isFirebaseAuthConfigured() ? 'enforced' : 'none')
   const activeSession = authMode === 'none' ? localFallbackSession : resolveSessionUser(session)
 
   if (authMode !== 'none') {

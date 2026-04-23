@@ -32,6 +32,10 @@ import type {
 import { config } from './config'
 import { authorizationHeaders, getStoredToken } from './auth'
 
+function allowMockApiFallback() {
+  return import.meta.env.DEV || ['localhost', '127.0.0.1'].includes(window.location.hostname)
+}
+
 const bootstrap: BootstrapResponse = {
   frontendBaseUrl: 'http://localhost:5173',
   authMode: 'none',
@@ -604,7 +608,10 @@ export async function fetchCurrentSession() {
     const payload = await response.json()
     currentSession = payload.data as AuthSessionResponse
     return currentSession
-  } catch {
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
     const fallback = resolveMockSession(token)
     currentSession = fallback
     return delay(fallback)
@@ -624,7 +631,10 @@ export async function registerUser(input: RegistrationInput) {
     }
     const payload = await response.json()
     return payload.data as AppUserSummary
-  } catch {
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
     const existing = users.find((candidate) => candidate.email === input.email)
     const user: AppUserSummary = existing ?? {
       id: `mock-user-${Date.now()}`,
@@ -1560,7 +1570,10 @@ async function fetchWithFallback<T>(path: string, fallback: T, nestedData = fals
     }
     const payload = await response.json()
     return nestedData ? (payload.data as T) : (payload as T)
-  } catch {
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
     return delay(fallback)
   }
 }

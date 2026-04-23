@@ -4,6 +4,7 @@ import { useSWRConfig } from 'swr'
 import { useBootstrap } from '../hooks/useBootstrap'
 import { useAuthSession } from '../hooks/useAuthSession'
 import { canAccessApp, clearStoredToken, defaultPathForApp, localFallbackSession, resolveSessionUser } from '../lib/auth'
+import { isFirebaseAuthConfigured } from '../lib/firebaseAuth'
 import { routes } from '../lib/routes'
 import type { AppSection } from '../types'
 
@@ -16,7 +17,10 @@ export function AppShell() {
   const { mutate } = useSWRConfig()
   const device = searchParams.get('device') ?? 'ER2'
   const scope = searchParams.get('scope') ?? 'powerboard'
-  const authMode = bootstrap?.authMode ?? 'none'
+  const authMode = bootstrap?.authMode ?? (isFirebaseAuthConfigured() ? 'enforced' : 'none')
+  if (authMode !== 'none' && !session?.authenticated) {
+    return null
+  }
   const activeSession = authMode === 'none' ? localFallbackSession : resolveSessionUser(session)
 
   const updateContext = (key: 'device' | 'scope', value: string) => {

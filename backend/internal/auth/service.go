@@ -214,6 +214,13 @@ func (s *Service) Register(ctx context.Context, principal Principal, input Regis
 	if err != nil {
 		return UserSummary{}, err
 	}
+	hasActiveUsers, err := s.repo.HasActiveUsers(ctx)
+	if err != nil {
+		return UserSummary{}, err
+	}
+	if !hasActiveUsers {
+		return s.repo.UpdateUserStatus(ctx, user.ID, "active", "", []string{"admin"})
+	}
 	return user, nil
 }
 
@@ -362,6 +369,14 @@ func (r *Repository) UpsertPendingRegistration(ctx context.Context, provider, su
 	}
 	record.Roles = []string{}
 	return toUserSummary(record), nil
+}
+
+func (r *Repository) HasActiveUsers(ctx context.Context) (bool, error) {
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM app_users WHERE status = 'active')`).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check active users: %w", err)
+	}
+	return exists, nil
 }
 
 func (r *Repository) ListUsers(ctx context.Context) ([]UserSummary, error) {

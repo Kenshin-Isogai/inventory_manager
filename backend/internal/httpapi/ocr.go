@@ -10,6 +10,9 @@ import (
 )
 
 func (h Handlers) OCRJobList(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	data, err := h.phaseThree.Jobs(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -19,6 +22,9 @@ func (h Handlers) OCRJobList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) CreateOCRJob(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "failed to parse multipart form"})
 		return
@@ -40,6 +46,9 @@ func (h Handlers) CreateOCRJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) OCRJobDetail(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	id := r.PathValue("id")
 	data, err := h.phaseThree.JobDetail(r.Context(), id)
 	if err != nil {
@@ -50,6 +59,9 @@ func (h Handlers) OCRJobDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) UpdateOCRReview(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	id := r.PathValue("id")
 	var input ocr.OCRReviewUpdateInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -64,6 +76,9 @@ func (h Handlers) UpdateOCRReview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) AssistOCRLine(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	id := r.PathValue("id")
 	var input ocr.OCRLineAssistInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -79,6 +94,9 @@ func (h Handlers) AssistOCRLine(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) RegisterOCRItem(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	id := r.PathValue("id")
 	var input ocr.OCRRegisterItemInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -94,6 +112,9 @@ func (h Handlers) RegisterOCRItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) CreateOCRProcurementDraft(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	id := r.PathValue("id")
 	result, err := h.phaseThree.CreateProcurementDraft(r.Context(), id)
 	if err != nil {
@@ -104,6 +125,9 @@ func (h Handlers) CreateOCRProcurementDraft(w http.ResponseWriter, r *http.Reque
 }
 
 func (h Handlers) RetryOCRJob(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
 	id := r.PathValue("id")
 	result, err := h.phaseThree.RetryJob(r.Context(), id)
 	if err != nil {

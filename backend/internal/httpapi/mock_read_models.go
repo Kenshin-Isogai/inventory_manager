@@ -9,6 +9,9 @@ import (
 )
 
 func (h Handlers) OperatorDashboard(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "operator") {
+		return
+	}
 	data, err := h.phaseOne.Dashboard(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -18,6 +21,9 @@ func (h Handlers) OperatorDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) ReservationList(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "operator", "inventory") {
+		return
+	}
 	data, err := h.phaseOne.Reservations(r.Context(), r.URL.Query().Get("device"), r.URL.Query().Get("scope"))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -27,6 +33,9 @@ func (h Handlers) ReservationList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) InventoryOverview(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "inventory") {
+		return
+	}
 	data, err := h.phaseOne.InventoryOverview(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -36,6 +45,9 @@ func (h Handlers) InventoryOverview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) ShortageList(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "operator", "inventory") {
+		return
+	}
 	data, err := h.phaseOne.Shortages(r.Context(), r.URL.Query().Get("device"), r.URL.Query().Get("scope"))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -45,6 +57,9 @@ func (h Handlers) ShortageList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) ShortageCSVExport(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "operator", "inventory") {
+		return
+	}
 	data, err := h.phaseOne.ShortageCSV(r.Context(), r.URL.Query().Get("device"), r.URL.Query().Get("scope"))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -57,6 +72,9 @@ func (h Handlers) ShortageCSVExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) ImportHistory(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "operator") {
+		return
+	}
 	data, err := h.phaseOne.Imports(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -66,6 +84,9 @@ func (h Handlers) ImportHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) MasterSummary(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "admin") {
+		return
+	}
 	data, err := h.phaseOne.MasterSummary(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -75,6 +96,9 @@ func (h Handlers) MasterSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) MasterDataExport(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "admin") {
+		return
+	}
 	exportType := r.URL.Query().Get("type")
 	data, err := h.phaseOne.ExportMasterCSV(r.Context(), exportType)
 	if err != nil {
@@ -88,6 +112,9 @@ func (h Handlers) MasterDataExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) MasterDataImport(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "admin", "operator") {
+		return
+	}
 	if err := r.ParseMultipartForm(16 << 20); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "failed to parse multipart form"})
 		return
@@ -108,6 +135,9 @@ func (h Handlers) MasterDataImport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) CreateReservation(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "operator") {
+		return
+	}
 	var input inventory.ReservationCreateInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json payload"})
@@ -121,6 +151,9 @@ func (h Handlers) CreateReservation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) AdjustInventory(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "inventory") {
+		return
+	}
 	var input inventory.InventoryAdjustInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json payload"})
