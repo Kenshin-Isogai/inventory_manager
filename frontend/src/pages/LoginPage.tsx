@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { LOCAL_LOGIN_PROFILES, setStoredToken } from '@/lib/auth'
+import { fetchCurrentSession } from '@/lib/mockApi'
 import type { AuthSessionResponse } from '@/types'
 import {
   describeIdentityAuthError,
@@ -28,13 +29,15 @@ export function LoginPage() {
 
   async function handleLogin(token: string) {
     setStoredToken(token)
-    await mutate('auth-session')
+    const session = await fetchCurrentSession()
+    await mutate('auth-session', session, false)
     navigate('/app/portal', { replace: true })
   }
 
   async function syncSessionAndNavigate() {
     await syncStoredTokenFromIdentityPlatform()
-    const session = await mutate('auth-session') as AuthSessionResponse | undefined
+    const session = await fetchCurrentSession() as AuthSessionResponse | undefined
+    await mutate('auth-session', session, false)
 
     if (!session?.authenticated) {
       throw new Error('Identity Platform sign-in succeeded, but the backend rejected the token.')
@@ -121,7 +124,8 @@ export function LoginPage() {
                       await signUpWithIdentityPlatform(email, password)
                       await sendVerificationEmail()
                       await syncStoredTokenFromIdentityPlatform()
-                      await mutate('auth-session')
+                      const session = await fetchCurrentSession()
+                      await mutate('auth-session', session, false)
                       navigate('/auth/verify-email', { replace: true })
                     } catch (caught) {
                       setError(describeIdentityAuthError(caught, 'Failed to create account'))
