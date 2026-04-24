@@ -130,6 +130,109 @@ func (r *Repository) UpsertRequirement(ctx context.Context, input RequirementUps
 	return result, nil
 }
 
+func (r *Repository) BatchUpsertRequirements(ctx context.Context, input RequirementBatchUpsertInput) (RequirementBatchUpsertResult, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RequirementBatchUpsertResult{}, fmt.Errorf("begin batch requirement tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var result RequirementBatchUpsertResult
+
+	for i, row := range input.Rows {
+		rr := RequirementBatchUpsertResultRow{Index: i}
+
+		// Check if scope×item combination already exists
+		var existingID string
+		err := tx.QueryRowContext(ctx, `
+			SELECT id FROM scope_item_requirements
+			WHERE scope_id = $1 AND item_id = $2
+		`, input.DeviceScopeID, row.ItemID).Scan(&existingID)
+
+		if err != nil && err.Error() != "sql: no rows in result set" {
+			rr.Status = "error"
+			rr.Error = fmt.Sprintf("check existing: %s", err.Error())
+			result.Errored++
+			result.Rows = append(result.Rows, rr)
+			continue
+		}
+
+		isDuplicate := existingID != ""
+		rr.Duplicate = isDuplicate
+
+		if isDuplicate {
+			// Update existing
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE scope_item_requirements
+				SET quantity = $2, note = $3, updated_at = NOW()
+				WHERE id = $1
+			`, existingID, row.Quantity, row.Note); err != nil {
+				rr.Status = "error"
+				rr.Error = fmt.Sprintf("update requirement: %s", err.Error())
+				result.Errored++
+				result.Rows = append(result.Rows, rr)
+				continue
+			}
+			rr.Status = "updated"
+			result.Updated++
+		} else {
+			// Insert new
+			newID := fmt.Sprintf("req-%d-%d", time.Now().UnixNano(), i)
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO scope_item_requirements (id, scope_id, item_id, quantity, note, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+			`, newID, input.DeviceScopeID, row.ItemID, row.Quantity, row.Note); err != nil {
+				rr.Status = "error"
+				rr.Error = fmt.Sprintf("insert requirement: %s", err.Error())
+				result.Errored++
+				result.Rows = append(result.Rows, rr)
+				continue
+			}
+			existingID = newID
+			rr.Status = "created"
+			result.Created++
+		}
+
+		// Reload summary
+		reloadRow := tx.QueryRowContext(ctx, `
+			SELECT sir.id, ds.device_key, ds.scope_key, i.id, i.canonical_item_number, i.description, sir.quantity, sir.note
+			FROM scope_item_requirements sir
+			JOIN device_scopes ds ON ds.id = sir.scope_id
+			JOIN items i ON i.id = sir.item_id
+			WHERE sir.id = $1
+		`, existingID)
+		var summary RequirementSummary
+		if err := reloadRow.Scan(&summary.ID, &summary.Device, &summary.Scope, &summary.ItemID, &summary.ItemNumber, &summary.Description, &summary.Quantity, &summary.Note); err != nil {
+			rr.Status = "error"
+			rr.Error = fmt.Sprintf("reload requirement: %s", err.Error())
+			result.Errored++
+			result.Rows = append(result.Rows, rr)
+			continue
+		}
+		rr.Requirement = &summary
+
+		if err := recordAuditEventTx(ctx, tx, "", "requirement.upserted", "scope_item_requirement", existingID, map[string]any{
+			"scopeId":  input.DeviceScopeID,
+			"itemId":   row.ItemID,
+			"quantity": row.Quantity,
+			"batch":    true,
+		}); err != nil {
+			rr.Status = "error"
+			rr.Error = fmt.Sprintf("audit: %s", err.Error())
+			result.Errored++
+			result.Rows = append(result.Rows, rr)
+			continue
+		}
+
+		result.Rows = append(result.Rows, rr)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return RequirementBatchUpsertResult{}, fmt.Errorf("commit batch requirement tx: %w", err)
+	}
+	return result, nil
+}
+
 func (r *Repository) ReservationDetail(ctx context.Context, id string) (ReservationDetail, error) {
 	return r.reservationDetail(ctx, r.db, id)
 }

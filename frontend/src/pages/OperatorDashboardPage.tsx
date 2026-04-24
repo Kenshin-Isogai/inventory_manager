@@ -1,20 +1,21 @@
 import type { ChangeEvent, FormEvent } from 'react'
 import { useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { useSWRConfig } from 'swr'
-import { CheckCircle2, Download, FileDown, FileUp, Loader2, PackageCheck, SearchCheck, Upload } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Download, ExternalLink, FileDown, FileUp, Loader2, PackageCheck, Plus, SearchCheck, Trash2, Upload } from 'lucide-react'
 
 import { DeviceScopeFilters } from '@/components/context/DeviceScopeFilters'
 import { ItemInfoPopover } from '@/components/ItemInfoPopover'
+import { NewItemDialog } from '@/components/NewItemDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { ItemCombobox, type ItemComboboxOption } from '@/components/ui/item-combobox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Textarea } from '@/components/ui/textarea'
 import { useAuthSession } from '@/hooks/useAuthSession'
 import { useDeviceScopes } from '@/hooks/useDeviceScopes'
 import { useInventoryOverview } from '@/hooks/useInventoryOverview'
@@ -22,11 +23,46 @@ import { useRequirements } from '@/hooks/useRequirements'
 import { resolveActorId } from '@/lib/auth'
 import { applyRequirementsImport, confirmBulkReservation, exportRequirementsCSV, fetchBulkReservationPreview, previewRequirementsImport } from '@/lib/additionalApi'
 import { downloadTextFile } from '@/lib/csv'
-import { upsertRequirement } from '@/lib/mockApi'
-import type { BulkReservationPreviewResponse, RequirementSummary, RequirementsImportPreviewResponse } from '@/types'
+import { batchUpsertRequirements, upsertRequirement } from '@/lib/mockApi'
+import type { BulkReservationPreviewResponse, MasterItemRecord, RequirementSummary, RequirementsImportPreviewResponse } from '@/types'
 
 const REQUIREMENTS_TEMPLATE =
   'device,scope,manufacturer,item_number,description,quantity,note\nER2,powerboard,Omron,ER2,Control relay,10,Initial build demand\n'
+
+type RequirementFormRow = {
+  key: string
+  itemId: string
+  quantity: number
+  note: string
+}
+
+let rowKeyCounter = 0
+function nextRowKey() {
+  return `row-${++rowKeyCounter}`
+}
+
+function createEmptyRow(): RequirementFormRow {
+  return { key: nextRowKey(), itemId: '', quantity: 1, note: '' }
+}
+
+function csvEscape(value: string | number) {
+  const text = String(value)
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+}
+
+function buildMissingItemsCSV(preview: RequirementsImportPreviewResponse) {
+  const itemNumbers = Array.from(
+    new Set(
+      preview.rows
+        .filter((row) => !row.itemRegistered && row.itemNumber.trim())
+        .map((row) => row.itemNumber.trim()),
+    ),
+  )
+  return [
+    'canonical_item_number,description,manufacturer,category',
+    ...itemNumbers.map((itemNumber) => [itemNumber, '', '', ''].map(csvEscape).join(',')),
+  ].join('\n')
+}
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10)
@@ -42,6 +78,7 @@ function getBadgeVariant(status: string) {
 
 export function OperatorDashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
   const device = searchParams.get('device') ?? ''
   const scope = searchParams.get('scope') ?? ''
   const system = searchParams.get('system') ?? ''
@@ -54,9 +91,13 @@ export function OperatorDashboardPage() {
 
   const [selectedRequirement, setSelectedRequirement] = useState<RequirementSummary | null>(null)
   const [formScopeId, setFormScopeId] = useState('')
-  const [formItemId, setFormItemId] = useState('')
-  const [formQuantity, setFormQuantity] = useState(1)
-  const [formNote, setFormNote] = useState('')
+  const [formRows, setFormRows] = useState<RequirementFormRow[]>([createEmptyRow()])
+  const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false)
+  const [duplicateItems, setDuplicateItems] = useState<string[]>([])
+  const [createdItemOptions, setCreatedItemOptions] = useState<ItemComboboxOption[]>([])
+  const [newItemDialogOpen, setNewItemDialogOpen] = useState(false)
+  const [newItemInitialNumber, setNewItemInitialNumber] = useState('')
+  const [newItemTargetRowKey, setNewItemTargetRowKey] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error'; text: string } | null>(null)
   const [isSaving, setIsSaving] = useState(false)
@@ -71,12 +112,26 @@ export function OperatorDashboardPage() {
 
   const scopes = scopeData?.rows ?? []
   const items = useMemo(() => {
-    const byId = new Map((inventory?.balances ?? []).map((row) => [row.itemId, row]))
+    const byId = new Map<string, ItemComboboxOption>()
+    for (const row of inventory?.balances ?? []) {
+      byId.set(row.itemId, {
+        itemId: row.itemId,
+        itemNumber: row.itemNumber,
+        description: row.description,
+        manufacturer: row.manufacturer,
+        category: row.category,
+      })
+    }
+    for (const row of createdItemOptions) {
+      byId.set(row.itemId, row)
+    }
     return Array.from(byId.values()).sort((left, right) => left.itemNumber.localeCompare(right.itemNumber))
-  }, [inventory?.balances])
+  }, [createdItemOptions, inventory?.balances])
   const activeScopes = scopes.filter((row) => row.status !== 'inactive')
   const selectedScope = activeScopes.find((row) => row.id === formScopeId)
   const actorId = resolveActorId(session)
+  const returnTo = `${location.pathname}${location.search}`
+  const itemsImportHref = `/app/operator/items/import?returnTo=${encodeURIComponent(returnTo)}`
 
   const filteredRows = (requirements?.rows ?? []).filter((row) => {
     if (!search) return true
@@ -112,36 +167,138 @@ export function OperatorDashboardPage() {
     const matchedScope = scopes.find((candidate) => candidate.deviceKey === row.device && candidate.scopeKey === row.scope)
     setSelectedRequirement(row)
     setFormScopeId(matchedScope?.id ?? '')
-    setFormItemId(row.itemId)
-    setFormQuantity(row.quantity)
-    setFormNote(row.note)
+    setFormRows([{ key: nextRowKey(), itemId: row.itemId, quantity: row.quantity, note: row.note }])
   }
 
   function resetForm() {
     setSelectedRequirement(null)
     setFormScopeId('')
-    setFormItemId('')
-    setFormQuantity(1)
-    setFormNote('')
+    setFormRows([createEmptyRow()])
+  }
+
+  function updateFormRow(key: string, field: keyof RequirementFormRow, value: string | number) {
+    setFormRows((prev) => prev.map((row) => (row.key === key ? { ...row, [field]: value } : row)))
+  }
+
+  function removeFormRow(key: string) {
+    setFormRows((prev) => {
+      const next = prev.filter((row) => row.key !== key)
+      return next.length === 0 ? [createEmptyRow()] : next
+    })
+  }
+
+  function addFormRow() {
+    setFormRows((prev) => [...prev, createEmptyRow()])
+  }
+
+  function openNewItemDialog(rowKey: string, query: string) {
+    setNewItemTargetRowKey(rowKey)
+    setNewItemInitialNumber(query)
+    setNewItemDialogOpen(true)
+  }
+
+  async function handleNewItemCreated(item: MasterItemRecord) {
+    const option: ItemComboboxOption = {
+      itemId: item.id,
+      itemNumber: item.itemNumber,
+      description: item.description,
+      manufacturer: item.manufacturerKey,
+      category: item.categoryKey,
+    }
+    setCreatedItemOptions((current) => {
+      const next = current.filter((candidate) => candidate.itemId !== option.itemId)
+      return [...next, option]
+    })
+    if (newItemTargetRowKey) {
+      updateFormRow(newItemTargetRowKey, 'itemId', item.id)
+    }
+    await Promise.all([mutate('inventory-overview'), mutate('master-data')])
+    setFeedback({ tone: 'success', text: `${item.itemNumber} を登録し、Requirement フォームに選択しました。` })
+  }
+
+  function handleDownloadMissingItemsCSV() {
+    if (!importPreview) return
+    downloadTextFile(`missing-items-${importPreview.fileName || 'requirements'}.csv`, buildMissingItemsCSV(importPreview))
+  }
+
+  // Check for duplicates against existing requirements
+  function findDuplicateItems(rows: RequirementFormRow[]): string[] {
+    const existingReqs = requirements?.rows ?? []
+    const scopeRecord = activeScopes.find((s) => s.id === formScopeId)
+    if (!scopeRecord) return []
+    const duplicates: string[] = []
+    for (const row of rows) {
+      if (!row.itemId) continue
+      const existing = existingReqs.find(
+        (req) => req.device === scopeRecord.deviceKey && req.scope === (scopeRecord.scopeName || scopeRecord.scopeKey) && req.itemId === row.itemId
+      )
+      if (existing) {
+        const item = items.find((i) => i.itemId === row.itemId)
+        duplicates.push(item ? `${item.itemNumber} / ${item.description}` : row.itemId)
+      }
+    }
+    return duplicates
   }
 
   async function handleRequirementSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+
+    // Single-edit mode (editing an existing requirement)
+    if (selectedRequirement) {
+      setIsSaving(true)
+      setFeedback(null)
+      try {
+        await upsertRequirement({
+          id: selectedRequirement.id,
+          deviceScopeId: formScopeId,
+          itemId: formRows[0]?.itemId ?? '',
+          quantity: formRows[0]?.quantity ?? 1,
+          note: formRows[0]?.note ?? '',
+        })
+        await Promise.all([mutate(['requirements', device, scope]), mutate(['scope-overview', device])])
+        setFeedback({ tone: 'success', text: 'Requirement updated.' })
+        resetForm()
+      } catch (caught) {
+        setFeedback({ tone: 'error', text: caught instanceof Error ? caught.message : 'Failed to save requirement.' })
+      } finally {
+        setIsSaving(false)
+      }
+      return
+    }
+
+    // Batch mode - filter valid rows
+    const validRows = formRows.filter((row) => row.itemId && row.quantity > 0)
+    if (validRows.length === 0) return
+
+    // Check for duplicates
+    const dupes = findDuplicateItems(validRows)
+    if (dupes.length > 0 && !duplicateDialogOpen) {
+      setDuplicateItems(dupes)
+      setDuplicateDialogOpen(true)
+      return
+    }
+
+    await submitBatch(validRows)
+  }
+
+  async function submitBatch(validRows: RequirementFormRow[]) {
+    setDuplicateDialogOpen(false)
     setIsSaving(true)
     setFeedback(null)
     try {
-      await upsertRequirement({
-        id: selectedRequirement?.id,
+      const result = await batchUpsertRequirements({
         deviceScopeId: formScopeId,
-        itemId: formItemId,
-        quantity: formQuantity,
-        note: formNote,
+        rows: validRows.map((row) => ({ itemId: row.itemId, quantity: row.quantity, note: row.note })),
       })
       await Promise.all([mutate(['requirements', device, scope]), mutate(['scope-overview', device])])
-      setFeedback({ tone: 'success', text: selectedRequirement ? 'Requirement updated.' : 'Requirement created.' })
+      const parts: string[] = []
+      if (result.created > 0) parts.push(`${result.created} created`)
+      if (result.updated > 0) parts.push(`${result.updated} updated`)
+      if (result.errored > 0) parts.push(`${result.errored} errored`)
+      setFeedback({ tone: result.errored > 0 ? 'error' : 'success', text: `Batch save: ${parts.join(', ')}.` })
       resetForm()
     } catch (caught) {
-      setFeedback({ tone: 'error', text: caught instanceof Error ? caught.message : 'Failed to save requirement.' })
+      setFeedback({ tone: 'error', text: caught instanceof Error ? caught.message : 'Failed to save requirements.' })
     } finally {
       setIsSaving(false)
     }
@@ -161,9 +318,12 @@ export function OperatorDashboardPage() {
     setFeedback(null)
     try {
       const result = await previewRequirementsImport(selectedFile)
+      const summary = {
+        invalid: result.rows.filter((row) => row.status !== 'valid').length,
+      }
       setImportPreview(result)
       setFeedback({
-        tone: importSummary.invalid > 0 ? 'error' : 'success',
+        tone: summary.invalid > 0 ? 'error' : 'success',
         text: `Preview generated for ${result.fileName}.`,
       })
     } catch (caught) {
@@ -283,7 +443,7 @@ export function OperatorDashboardPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_480px]">
         <Card>
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -336,8 +496,8 @@ export function OperatorDashboardPage() {
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>{selectedRequirement ? 'Edit Requirement' : 'New Requirement'}</CardTitle>
-              <CardDescription>Set item demand for a device scope.</CardDescription>
+              <CardTitle>{selectedRequirement ? 'Edit Requirement' : 'New Requirements'}</CardTitle>
+              <CardDescription>{selectedRequirement ? 'Update an existing requirement.' : 'Add item demand for a scope. You can add multiple items at once.'}</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleRequirementSubmit} className="space-y-4">
@@ -356,32 +516,76 @@ export function OperatorDashboardPage() {
                     </SelectContent>
                   </Select>
                 </div>
+
                 <div className="space-y-2">
-                  <Label htmlFor="requirement-item">Item</Label>
-                  <Select value={formItemId} onValueChange={setFormItemId}>
-                    <SelectTrigger id="requirement-item">
-                      <SelectValue placeholder="Select item" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {items.map((row) => (
-                        <SelectItem key={row.itemId} value={row.itemId}>
-                          {row.itemNumber} / {row.description}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="flex items-center justify-between">
+                    <Label>Items</Label>
+                    {!selectedRequirement && (
+                      <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={addFormRow}>
+                        <Plus className="h-3.5 w-3.5" />
+                        Add Row
+                      </Button>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {formRows.map((formRow) => {
+                      const isItemUsedElsewhere = formRows.some((other) => other.key !== formRow.key && other.itemId !== '' && other.itemId === formRow.itemId)
+                      return (
+                        <div key={formRow.key} className="flex items-start gap-2">
+                          <div className="min-w-0 flex-1">
+                            <ItemCombobox
+                              items={items}
+                              value={formRow.itemId}
+                              onValueChange={(value) => updateFormRow(formRow.key, 'itemId', value)}
+                              onCreateNew={(query) => openNewItemDialog(formRow.key, query)}
+                              placeholder="Search or select item"
+                              triggerClassName={`h-9 text-xs ${isItemUsedElsewhere ? 'border-yellow-400' : ''}`}
+                            />
+                          </div>
+                          <Input
+                            type="number"
+                            min={1}
+                            className="h-9 w-16 text-xs"
+                            placeholder="Qty"
+                            value={formRow.quantity}
+                            onChange={(e) => updateFormRow(formRow.key, 'quantity', Math.max(1, Number(e.target.value) || 1))}
+                          />
+                          <Input
+                            className="h-9 w-24 text-xs"
+                            placeholder="Note"
+                            value={formRow.note}
+                            onChange={(e) => updateFormRow(formRow.key, 'note', e.target.value)}
+                          />
+                          {!selectedRequirement && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-destructive"
+                              onClick={() => removeFormRow(formRow.key)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                  {formRows.some((r) => formRows.filter((o) => o.itemId === r.itemId && r.itemId !== '').length > 1) && (
+                    <p className="flex items-center gap-1 text-xs text-yellow-600">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      Duplicate items detected within this form.
+                    </p>
+                  )}
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="requirement-quantity">Quantity</Label>
-                  <Input id="requirement-quantity" type="number" min={1} value={formQuantity} onChange={(event) => setFormQuantity(Math.max(1, Number(event.target.value) || 1))} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="requirement-note">Note</Label>
-                  <Textarea id="requirement-note" value={formNote} onChange={(event) => setFormNote(event.target.value)} />
-                </div>
+
                 <div className="flex gap-2">
-                  <Button type="submit" className="flex-1" disabled={!formScopeId || !formItemId || isSaving}>
-                    {isSaving ? 'Saving...' : selectedRequirement ? 'Update' : 'Create'}
+                  <Button
+                    type="submit"
+                    className="flex-1"
+                    disabled={!formScopeId || formRows.every((r) => !r.itemId) || isSaving}
+                  >
+                    {isSaving ? 'Saving...' : selectedRequirement ? 'Update' : `Save All (${formRows.filter((r) => r.itemId).length})`}
                   </Button>
                   <Button type="button" variant="outline" onClick={resetForm}>
                     Clear
@@ -454,6 +658,23 @@ export function OperatorDashboardPage() {
                     {isApplyingImport ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                     Apply Requirements
                   </Button>
+                  {importSummary.missingItems > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 p-3">
+                      <Button type="button" variant="outline" size="sm" className="gap-2 bg-white" onClick={handleDownloadMissingItemsCSV}>
+                        <FileDown className="h-4 w-4" />
+                        不足アイテム CSV をダウンロード
+                      </Button>
+                      <Button asChild type="button" variant="link" size="sm" className="gap-1 px-0 text-amber-900">
+                        <Link to={itemsImportHref}>
+                          Items Import ページで登録
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </Link>
+                      </Button>
+                      <p className="basis-full text-xs text-amber-900">
+                        CSV は canonical_item_number と空の description, manufacturer, category を含みます。登録後はこのページへ戻り、同じ Requirements CSV を再プレビューしてください。
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
@@ -507,6 +728,37 @@ export function OperatorDashboardPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={duplicateDialogOpen} onOpenChange={setDuplicateDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-yellow-500" />
+              Duplicate Requirements Detected
+            </DialogTitle>
+            <DialogDescription>
+              The following items already have requirements for this scope. Saving will update their quantity and note.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-48 space-y-1 overflow-auto text-sm">
+            {duplicateItems.map((name) => (
+              <div key={name} className="rounded border px-3 py-2">{name}</div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDuplicateDialogOpen(false)}>Cancel</Button>
+            <Button onClick={() => void submitBatch(formRows.filter((r) => r.itemId && r.quantity > 0))}>
+              Save Anyway
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <NewItemDialog
+        open={newItemDialogOpen}
+        initialItemNumber={newItemInitialNumber}
+        onOpenChange={setNewItemDialogOpen}
+        onCreated={(item) => void handleNewItemCreated(item)}
+      />
     </div>
   )
 }

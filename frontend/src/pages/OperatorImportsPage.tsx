@@ -1,5 +1,6 @@
 import type { ChangeEvent } from 'react'
 import { useMemo, useRef, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useSWRConfig } from 'swr'
 
 import { Badge } from '@/components/ui/badge'
@@ -193,6 +194,8 @@ function RowResultsTable({
 }
 
 export function OperatorImportsPage() {
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [pageTab, setPageTab] = useState<PageTab>('upload')
   const { data } = useImports()
   const { data: session } = useAuthSession()
@@ -219,6 +222,8 @@ export function OperatorImportsPage() {
   const selectedDetail = selectedDetailId ? detailCache[selectedDetailId] ?? null : null
   const undoTarget = undoTargetId ? detailCache[undoTargetId] ?? null : null
   const actorId = session?.user?.userId?.trim() || session?.user?.email?.trim() || 'operator-imports-page'
+  const returnTo = searchParams.get('returnTo') ?? ''
+  const safeReturnTo = returnTo.startsWith('/app/') ? returnTo : ''
 
   const previewSummary = useMemo(() => summarizeRows(previewResult?.rows ?? []), [previewResult])
   const filteredPreviewRows = useMemo(() => {
@@ -326,6 +331,9 @@ export function OperatorImportsPage() {
       setSelectedFile(null)
       resetFileInput()
       setFeedback({ tone: 'success', text: `${detail.fileName} を適用しました。履歴と結果詳細を確認できます。` })
+      if (safeReturnTo) {
+        navigate(safeReturnTo, { replace: true })
+      }
     } catch (caught) {
       setFeedback({
         tone: 'error',
@@ -392,6 +400,11 @@ export function OperatorImportsPage() {
         <p className="text-muted-foreground">
           CSV からアイテムとエイリアスを一括で登録・管理します。
         </p>
+        {safeReturnTo && (
+          <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
+            Apply 成功後、Requirements ページへ自動的に戻ります。
+          </p>
+        )}
       </div>
 
       <Tabs value={pageTab} onValueChange={(v) => setPageTab(v as PageTab)}>

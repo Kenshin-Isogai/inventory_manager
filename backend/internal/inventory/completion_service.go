@@ -17,6 +17,21 @@ func (s *Service) UpsertRequirement(ctx context.Context, input RequirementUpsert
 	return s.repo.UpsertRequirement(ctx, input)
 }
 
+func (s *Service) BatchUpsertRequirements(ctx context.Context, input RequirementBatchUpsertInput) (RequirementBatchUpsertResult, error) {
+	if input.DeviceScopeID == "" {
+		return RequirementBatchUpsertResult{}, fmt.Errorf("deviceScopeId is required")
+	}
+	if len(input.Rows) == 0 {
+		return RequirementBatchUpsertResult{}, fmt.Errorf("at least one row is required")
+	}
+	for i, row := range input.Rows {
+		if row.ItemID == "" || row.Quantity <= 0 {
+			return RequirementBatchUpsertResult{}, fmt.Errorf("row %d: itemId and positive quantity are required", i)
+		}
+	}
+	return s.repo.BatchUpsertRequirements(ctx, input)
+}
+
 func (s *Service) ReservationDetail(ctx context.Context, id string) (ReservationDetail, error) {
 	if id == "" {
 		return ReservationDetail{}, fmt.Errorf("reservation id is required")

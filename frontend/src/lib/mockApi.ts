@@ -29,6 +29,8 @@ import type {
   OCRRegisterItemInput,
   RequirementListResponse,
   RequirementUpsertInput,
+  RequirementBatchUpsertInput,
+  RequirementBatchUpsertResult,
   ReservationActionInput,
   ReservationCreateInput,
   ReservationDetail,
@@ -1078,6 +1080,27 @@ export async function upsertRequirement(input: RequirementUpsertInput) {
       throw error
     }
     return delay({ status: 'saved' })
+  }
+}
+
+export async function batchUpsertRequirements(input: RequirementBatchUpsertInput) {
+  try {
+    const response = await fetch(`${config.apiBaseUrl}/api/v1/operator/requirements/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authorizationHeaders() },
+      body: JSON.stringify(input),
+    })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null)
+      throw new Error((payload as { error?: string } | null)?.error ?? `request failed: ${response.status}`)
+    }
+    const payload = await response.json()
+    return payload.data as RequirementBatchUpsertResult
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
+    return delay({ created: input.rows.length, updated: 0, errored: 0, rows: [] }) as unknown as RequirementBatchUpsertResult
   }
 }
 

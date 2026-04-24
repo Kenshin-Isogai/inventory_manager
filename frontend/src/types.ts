@@ -119,6 +119,32 @@ export type RequirementUpsertInput = {
   note: string
 }
 
+export type RequirementBatchUpsertRow = {
+  itemId: string
+  quantity: number
+  note: string
+}
+
+export type RequirementBatchUpsertInput = {
+  deviceScopeId: string
+  rows: RequirementBatchUpsertRow[]
+}
+
+export type RequirementBatchUpsertResultRow = {
+  index: number
+  status: 'created' | 'updated' | 'error'
+  requirement?: RequirementSummary
+  error?: string
+  duplicate: boolean
+}
+
+export type RequirementBatchUpsertResult = {
+  created: number
+  updated: number
+  errored: number
+  rows: RequirementBatchUpsertResultRow[]
+}
+
 export type ReservationCreateInput = {
   itemId: string
   deviceScopeId: string
@@ -884,5 +910,24 @@ export type RequirementsImportResult = {
   updated: number
   skipped: number
   errored: number
+}
+
+export type MasterItemCreateInput = {
+  itemNumber: string
+  description: string
+  manufacturerKey: string
+  categoryKey: string
+  note?: string
+}
+
+export type MasterItemRecord = {
+  id: string
+  itemNumber: string
+  description: string
+  manufacturerKey: string
+  categoryKey: string
+  defaultSupplierId: string
+  note: string
+  lifecycleStatus: string
 }
 

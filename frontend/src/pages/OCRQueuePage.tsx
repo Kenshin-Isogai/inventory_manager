@@ -43,6 +43,7 @@ type ReviewHeaderOverride = Partial<Pick<OCRReviewUpdateInput, 'supplierId' | 'q
 const UNMATCHED_SUPPLIER_VALUE = '__unmatched_supplier__'
 const UNRESOLVED_ITEM_VALUE = '__unresolved_item__'
 const UNASSIGNED_BUDGET_VALUE = '__unassigned_budget__'
+const NEW_CATEGORY_VALUE = '__new_category__'
 
 export function OCRQueuePage() {
   const navigate = useNavigate()
@@ -159,8 +160,9 @@ export function OCRQueuePage() {
           categoryName:
             masterData?.categories.find((category) => category.key === suggestion.suggestedCategoryKey)?.name ||
             current[line.id]?.categoryName ||
+            formatCategoryName(suggestion.suggestedCategoryKey) ||
             masterData?.categories[0]?.name ||
-            'misc',
+            formatCategoryName('misc'),
           defaultSupplierId: currentHeader?.supplierId ?? '',
           supplierAliasNumber: suggestion.suggestedAliasNumber || line.itemNumber,
           unitsPerOrder: current[line.id]?.unitsPerOrder || 1,
@@ -177,10 +179,27 @@ export function OCRQueuePage() {
     if (!draft) {
       return
     }
+    const categoryKey = normalizeCategoryKey(draft.categoryKey || draft.categoryName)
+    const categoryName = draft.categoryName.trim() || formatCategoryName(categoryKey)
+    if (!categoryKey) {
+      setDraftError('Category key is required. Use letters, numbers, and hyphens for a new category.')
+      return
+    }
+    if (!categoryName) {
+      setDraftError('Category name is required.')
+      return
+    }
     setBusyLineId(lineId)
+    setDraftError('')
     try {
-      await registerOCRItem(selectedID, draft)
+      await registerOCRItem(selectedID, {
+        ...draft,
+        categoryKey,
+        categoryName,
+      })
       await Promise.all([mutate(['ocr-job-detail', selectedID]), mutate('master-data')])
+    } catch (error) {
+      setDraftError(error instanceof Error ? error.message : 'Failed to register item')
     } finally {
       setBusyLineId('')
     }
@@ -737,6 +756,8 @@ export function OCRQueuePage() {
                     {currentLines.filter((line) => !line.itemId).map((line) => {
                       const registerDraft = draftByLine[line.id] ?? defaultRegisterDraft(line, currentHeader?.supplierId ?? '')
                       const categoryOptions = masterData?.categories ?? []
+                      const selectedCategory = categoryOptions.find((category) => category.key === registerDraft.categoryKey)
+                      const isCustomCategory = !selectedCategory
                       return (
                         <Card key={`${line.id}-register`} className="border shadow-sm">
                           <CardHeader className="pb-3">
@@ -774,20 +795,26 @@ export function OCRQueuePage() {
                                 />
                               </div>
                               <div className="space-y-2">
-                                <Label htmlFor={`cat-${line.id}`}>Category</Label>
+                               <Label htmlFor={`cat-${line.id}`}>Category</Label>
                                 <Select
-                                  value={registerDraft.categoryKey}
+                                  value={selectedCategory?.key || NEW_CATEGORY_VALUE}
                                   onValueChange={(value) =>
-                                    updateRegisterDraft(line.id, {
-                                      categoryKey: value,
-                                      categoryName: categoryOptions.find((c) => c.key === value)?.name || value,
-                                    })
+                                    value === NEW_CATEGORY_VALUE
+                                      ? updateRegisterDraft(line.id, {
+                                          categoryKey: selectedCategory ? '' : registerDraft.categoryKey,
+                                          categoryName: selectedCategory ? '' : registerDraft.categoryName,
+                                        })
+                                      : updateRegisterDraft(line.id, {
+                                          categoryKey: value,
+                                          categoryName: categoryOptions.find((c) => c.key === value)?.name || value,
+                                        })
                                   }
                                 >
                                   <SelectTrigger id={`cat-${line.id}`}>
-                                    <SelectValue />
+                                    <SelectValue placeholder="Select category" />
                                   </SelectTrigger>
                                   <SelectContent>
+                                    <SelectItem value={NEW_CATEGORY_VALUE}>Enter new category</SelectItem>
                                     {categoryOptions.map((category) => (
                                       <SelectItem key={category.key} value={category.key}>
                                         {category.name}
@@ -796,6 +823,39 @@ export function OCRQueuePage() {
                                   </SelectContent>
                                 </Select>
                               </div>
+                              {isCustomCategory && (
+                                <>
+                                  <div className="space-y-2">
+                                    <Label htmlFor={`cat-name-${line.id}`}>New Category Name</Label>
+                                    <Input
+                                      id={`cat-name-${line.id}`}
+                                      value={registerDraft.categoryName}
+                                      onChange={(event) =>
+                                        updateRegisterDraft(line.id, {
+                                          categoryName: event.target.value,
+                                        })
+                                      }
+                                      placeholder="e.g. Cable Harness"
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label htmlFor={`cat-key-${line.id}`}>Category Key</Label>
+                                    <Input
+                                      id={`cat-key-${line.id}`}
+                                      value={registerDraft.categoryKey}
+                                      onChange={(event) =>
+                                        updateRegisterDraft(line.id, {
+                                          categoryKey: normalizeCategoryKey(event.target.value),
+                                        })
+                                      }
+                                      placeholder={normalizeCategoryKey(registerDraft.categoryName) || 'e.g. cable-harness'}
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                      New categories are saved with this key. Use lowercase letters, numbers, and hyphens.
+                                    </p>
+                                  </div>
+                                </>
+                              )}
                               <div className="space-y-2">
                                 <Label htmlFor={`alias-${line.id}`}>Supplier Alias</Label>
                                 <Input
@@ -917,11 +977,30 @@ function defaultRegisterDraft(line: OCRResultLine, supplierId: string): Register
     description: line.itemDescription,
     manufacturerName: line.manufacturerName,
     categoryKey: 'misc',
-    categoryName: 'misc',
+    categoryName: formatCategoryName('misc'),
     defaultSupplierId: supplierId,
     supplierAliasNumber: line.itemNumber,
     unitsPerOrder: 1,
   }
+}
+
+function normalizeCategoryKey(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]+/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+function formatCategoryName(value: string) {
+  return normalizeCategoryKey(value)
+    .split('-')
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ')
 }
 
 function dedupeSuppliers(detail?: OCRJobDetailResponse, masterData?: { suppliers: { id: string; name: string }[] }) {

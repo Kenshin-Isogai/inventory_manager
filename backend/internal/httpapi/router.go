@@ -27,6 +27,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, authService *auth.Service
 	mux.HandleFunc("POST /api/v1/auth/register", handlers.RegisterUser)
 	mux.HandleFunc("GET /api/v1/operator/requirements", handlers.Requirements)
 	mux.HandleFunc("POST /api/v1/operator/requirements", handlers.UpsertRequirement)
+	mux.HandleFunc("POST /api/v1/operator/requirements/batch", handlers.BatchUpsertRequirements)
 	mux.HandleFunc("GET /api/v1/operator/master-data/devices", handlers.Devices)
 	mux.HandleFunc("GET /api/v1/operator/master-data/systems", handlers.ScopeSystems)
 	mux.HandleFunc("GET /api/v1/operator/master-data/scopes", handlers.DeviceScopes)

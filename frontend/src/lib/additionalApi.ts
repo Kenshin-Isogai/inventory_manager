@@ -13,6 +13,8 @@ import type {
   ImportPreviewResult,
   RequirementsImportPreviewResponse,
   RequirementsImportResult,
+  MasterItemCreateInput,
+  MasterItemRecord,
 } from '../types'
 import { config } from './config'
 import { authorizationHeaders } from './auth'
@@ -83,6 +85,10 @@ export async function fetchItemSuggest(query: string): Promise<ItemSuggestionRes
 
 export async function fetchCategorySuggest(query: string): Promise<CategorySuggestionResponse> {
   return fetchAPI<CategorySuggestionResponse>(`/api/v1/admin/master-data/categories/suggest?q=${encodeURIComponent(query)}`)
+}
+
+export async function createMasterItem(input: MasterItemCreateInput): Promise<MasterItemRecord> {
+  return postAPI<MasterItemRecord>('/api/v1/admin/master-data/items', input)
 }
 
 export async function fetchBulkReservationPreview(scopeId: string): Promise<BulkReservationPreviewResponse> {

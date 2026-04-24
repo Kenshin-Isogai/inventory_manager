@@ -23,6 +23,32 @@ type RequirementUpsertInput struct {
 	Note          string `json:"note"`
 }
 
+type RequirementBatchUpsertInput struct {
+	DeviceScopeID string                        `json:"deviceScopeId"`
+	Rows          []RequirementBatchUpsertRow   `json:"rows"`
+}
+
+type RequirementBatchUpsertRow struct {
+	ItemID   string `json:"itemId"`
+	Quantity int    `json:"quantity"`
+	Note     string `json:"note"`
+}
+
+type RequirementBatchUpsertResultRow struct {
+	Index      int                `json:"index"`
+	Status     string             `json:"status"` // "created", "updated", "error"
+	Requirement *RequirementSummary `json:"requirement,omitempty"`
+	Error      string             `json:"error,omitempty"`
+	Duplicate  bool               `json:"duplicate"` // true if scope×item already existed
+}
+
+type RequirementBatchUpsertResult struct {
+	Created int                              `json:"created"`
+	Updated int                              `json:"updated"`
+	Errored int                              `json:"errored"`
+	Rows    []RequirementBatchUpsertResultRow `json:"rows"`
+}
+
 type ReservationAllocation struct {
 	ID           string `json:"id"`
 	LocationCode string `json:"locationCode"`

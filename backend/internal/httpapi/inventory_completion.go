@@ -38,6 +38,23 @@ func (h Handlers) UpsertRequirement(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, APIEnvelope[inventory.RequirementSummary]{Data: data})
 }
 
+func (h Handlers) BatchUpsertRequirements(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "operator") {
+		return
+	}
+	var input inventory.RequirementBatchUpsertInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json payload"})
+		return
+	}
+	data, err := h.phaseOne.BatchUpsertRequirements(r.Context(), input)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, APIEnvelope[inventory.RequirementBatchUpsertResult]{Data: data})
+}
+
 func (h Handlers) ReservationDetail(w http.ResponseWriter, r *http.Request) {
 	if !h.requireActiveRole(w, r, "operator", "inventory") {
 		return
