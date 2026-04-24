@@ -84,10 +84,7 @@ export function OCRQueuePage() {
 
   // Elapsed-time counter while OCR is running
   useEffect(() => {
-    if (!uploadingJob) {
-      setOcrElapsedSec(0)
-      return
-    }
+    if (!uploadingJob) return
     const t = setInterval(() => setOcrElapsedSec((s) => s + 1), 1000)
     return () => clearInterval(t)
   }, [uploadingJob])
@@ -128,6 +125,7 @@ export function OCRQueuePage() {
     if (!pendingUploadFile) {
       return
     }
+    setOcrElapsedSec(0)
     setUploadingJob(true)
     setUploadError('')
     try {
