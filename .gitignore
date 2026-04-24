@@ -25,3 +25,5 @@ frontend/coverage/
 
 .idea/
 .vscode/
+
+*.code-workspace

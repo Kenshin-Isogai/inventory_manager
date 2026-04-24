@@ -352,6 +352,10 @@ type DeviceScopeRecord struct {
 	ID                 string `json:"id"`
 	DeviceID           string `json:"deviceId"`
 	DeviceKey          string `json:"deviceKey"`
+	ParentScopeID      string `json:"parentScopeId"`
+	ParentScopeKey     string `json:"parentScopeKey"`
+	SystemKey          string `json:"systemKey"`
+	SystemName         string `json:"systemName"`
 	ScopeKey           string `json:"scopeKey"`
 	ScopeName          string `json:"scopeName"`
 	ScopeType          string `json:"scopeType"`
@@ -367,11 +371,32 @@ type DeviceScopeUpsertInput struct {
 	ID                 string `json:"id"`
 	DeviceID           string `json:"deviceId"`
 	DeviceKey          string `json:"deviceKey"`
+	ParentScopeID      string `json:"parentScopeId"`
+	SystemKey          string `json:"systemKey"`
 	ScopeKey           string `json:"scopeKey"`
 	ScopeName          string `json:"scopeName"`
 	ScopeType          string `json:"scopeType"`
 	OwnerDepartmentKey string `json:"ownerDepartmentKey"`
 	Status             string `json:"status"`
+}
+
+type ScopeSystemRecord struct {
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
+	InUseCount  int    `json:"inUseCount"`
+}
+
+type ScopeSystemList struct {
+	Rows []ScopeSystemRecord `json:"rows"`
+}
+
+type ScopeSystemUpsertInput struct {
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
 }
 
 type LocationUpsertInput struct {

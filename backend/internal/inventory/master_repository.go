@@ -2,6 +2,8 @@ package inventory
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -217,11 +219,83 @@ func (r *Repository) UpsertDevice(ctx context.Context, input DeviceUpsertInput) 
 	return result, nil
 }
 
+var deviceScopeTypes = map[string]struct{}{
+	"system":       {},
+	"assembly":     {},
+	"module":       {},
+	"area":         {},
+	"work_package": {},
+}
+
+type deviceScopeParentRecord struct {
+	DeviceKey string
+	SystemKey string
+}
+
+func normalizeDeviceScopeType(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	value = strings.ReplaceAll(value, "-", "_")
+	return value
+}
+
+func isValidDeviceScopeType(value string) bool {
+	_, ok := deviceScopeTypes[value]
+	return ok
+}
+
+func (r *Repository) deviceScopeParent(ctx context.Context, parentScopeID string) (deviceScopeParentRecord, error) {
+	var parent deviceScopeParentRecord
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT device_key, COALESCE(system_key, '')
+		FROM device_scopes
+		WHERE id = $1
+	`, parentScopeID).Scan(&parent.DeviceKey, &parent.SystemKey); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return deviceScopeParentRecord{}, fmt.Errorf("parent scope not found: %s", parentScopeID)
+		}
+		return deviceScopeParentRecord{}, fmt.Errorf("query parent scope: %w", err)
+	}
+	return parent, nil
+}
+
+func (r *Repository) deviceScopeWouldCreateCycle(ctx context.Context, scopeID, parentScopeID string) (bool, error) {
+	var cycle bool
+	if err := r.db.QueryRowContext(ctx, `
+		WITH RECURSIVE ancestors AS (
+			SELECT id, parent_scope_id
+			FROM device_scopes
+			WHERE id = $1
+			UNION ALL
+			SELECT ds.id, ds.parent_scope_id
+			FROM device_scopes ds
+			JOIN ancestors a ON ds.id = a.parent_scope_id
+		)
+		SELECT EXISTS (SELECT 1 FROM ancestors WHERE id = $2)
+	`, parentScopeID, scopeID).Scan(&cycle); err != nil {
+		return false, fmt.Errorf("check scope hierarchy cycle: %w", err)
+	}
+	return cycle, nil
+}
+
 func (r *Repository) DeviceScopes(ctx context.Context) (DeviceScopeList, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT ds.id, COALESCE(ds.device_id, ''), ds.device_key, ds.scope_key, ds.scope_name, ds.scope_type, COALESCE(ds.owner_department_key, ''), ds.status
+		SELECT
+			ds.id,
+			COALESCE(ds.device_id, ''),
+			ds.device_key,
+			COALESCE(ds.parent_scope_id, ''),
+			COALESCE(parent.scope_key, ''),
+			COALESCE(ds.system_key, ''),
+			COALESCE(ss.name, ''),
+			ds.scope_key,
+			ds.scope_name,
+			ds.scope_type,
+			COALESCE(ds.owner_department_key, ''),
+			ds.status
 		FROM device_scopes ds
-		ORDER BY ds.device_key, ds.scope_key
+		LEFT JOIN device_scopes parent ON parent.id = ds.parent_scope_id
+		LEFT JOIN scope_systems ss ON ss.key = ds.system_key
+		ORDER BY ds.device_key, COALESCE(ds.system_key, ''), COALESCE(parent.scope_key, ''), ds.scope_type, ds.scope_key
 	`)
 	if err != nil {
 		return DeviceScopeList{}, fmt.Errorf("query device scopes: %w", err)
@@ -230,7 +304,10 @@ func (r *Repository) DeviceScopes(ctx context.Context) (DeviceScopeList, error) 
 	result := DeviceScopeList{Rows: []DeviceScopeRecord{}}
 	for rows.Next() {
 		var row DeviceScopeRecord
-		if err := rows.Scan(&row.ID, &row.DeviceID, &row.DeviceKey, &row.ScopeKey, &row.ScopeName, &row.ScopeType, &row.OwnerDepartmentKey, &row.Status); err != nil {
+		if err := rows.Scan(
+			&row.ID, &row.DeviceID, &row.DeviceKey, &row.ParentScopeID, &row.ParentScopeKey,
+			&row.SystemKey, &row.SystemName, &row.ScopeKey, &row.ScopeName, &row.ScopeType, &row.OwnerDepartmentKey, &row.Status,
+		); err != nil {
 			return DeviceScopeList{}, fmt.Errorf("scan device scope: %w", err)
 		}
 		result.Rows = append(result.Rows, row)
@@ -239,9 +316,21 @@ func (r *Repository) DeviceScopes(ctx context.Context) (DeviceScopeList, error) 
 }
 
 func (r *Repository) UpsertDeviceScope(ctx context.Context, input DeviceScopeUpsertInput) (DeviceScopeRecord, error) {
+	deviceKey := strings.TrimSpace(input.DeviceKey)
+	scopeKey := normalizeLookupKey(input.ScopeKey)
+	scopeType := normalizeDeviceScopeType(defaultString(input.ScopeType, "assembly"))
+	parentScopeID := strings.TrimSpace(input.ParentScopeID)
+	systemKey := normalizeLookupKey(input.SystemKey)
+	ownerDepartmentKey := normalizeLookupKey(input.OwnerDepartmentKey)
+	if deviceKey == "" || scopeKey == "" {
+		return DeviceScopeRecord{}, fmt.Errorf("deviceKey and scopeKey are required")
+	}
+	if !isValidDeviceScopeType(scopeType) {
+		return DeviceScopeRecord{}, fmt.Errorf("unsupported scopeType: %s", input.ScopeType)
+	}
 	deviceID := input.DeviceID
 	if deviceID == "" {
-		if err := r.db.QueryRowContext(ctx, `SELECT id FROM devices WHERE device_key = $1`, input.DeviceKey).Scan(&deviceID); err != nil {
+		if err := r.db.QueryRowContext(ctx, `SELECT id FROM devices WHERE device_key = $1`, deviceKey).Scan(&deviceID); err != nil {
 			return DeviceScopeRecord{}, fmt.Errorf("resolve device id: %w", err)
 		}
 	}
@@ -249,30 +338,157 @@ func (r *Repository) UpsertDeviceScope(ctx context.Context, input DeviceScopeUps
 	if id == "" {
 		id = fmt.Sprintf("scope-%d", time.Now().UnixNano())
 	}
+	if scopeType == "system" {
+		if parentScopeID != "" {
+			return DeviceScopeRecord{}, fmt.Errorf("system scopes cannot have a parentScopeId")
+		}
+		if systemKey == "" {
+			systemKey = scopeKey
+		}
+		if scopeKey != systemKey {
+			return DeviceScopeRecord{}, fmt.Errorf("system scope key must match systemKey")
+		}
+		if ownerDepartmentKey == "" {
+			ownerDepartmentKey = systemKey
+		}
+	} else {
+		if parentScopeID == "" {
+			return DeviceScopeRecord{}, fmt.Errorf("non-system scopes require a parentScopeId")
+		}
+		parent, err := r.deviceScopeParent(ctx, parentScopeID)
+		if err != nil {
+			return DeviceScopeRecord{}, err
+		}
+		if parent.DeviceKey != deviceKey {
+			return DeviceScopeRecord{}, fmt.Errorf("parent scope %s belongs to device %s, expected %s", parentScopeID, parent.DeviceKey, deviceKey)
+		}
+		if parent.SystemKey == "" {
+			return DeviceScopeRecord{}, fmt.Errorf("parent scope %s is missing a systemKey", parentScopeID)
+		}
+		if systemKey != "" && systemKey != parent.SystemKey {
+			return DeviceScopeRecord{}, fmt.Errorf("child scope systemKey must match parent systemKey %s", parent.SystemKey)
+		}
+		if input.ID != "" {
+			cycle, err := r.deviceScopeWouldCreateCycle(ctx, input.ID, parentScopeID)
+			if err != nil {
+				return DeviceScopeRecord{}, err
+			}
+			if cycle {
+				return DeviceScopeRecord{}, fmt.Errorf("parent scope would create a hierarchy cycle")
+			}
+		}
+		systemKey = parent.SystemKey
+	}
 	if _, err := r.db.ExecContext(ctx, `
-		INSERT INTO device_scopes (id, device_id, device_key, scope_key, scope_name, scope_type, owner_department_key, status, description, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, '', NOW())
+		INSERT INTO device_scopes (id, device_id, device_key, parent_scope_id, system_key, scope_key, scope_name, scope_type, owner_department_key, status, description, updated_at)
+		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, NULLIF($9, ''), $10, '', NOW())
 		ON CONFLICT (id) DO UPDATE
 		SET device_id = EXCLUDED.device_id,
 		    device_key = EXCLUDED.device_key,
+		    parent_scope_id = EXCLUDED.parent_scope_id,
+		    system_key = EXCLUDED.system_key,
 		    scope_key = EXCLUDED.scope_key,
 		    scope_name = EXCLUDED.scope_name,
 		    scope_type = EXCLUDED.scope_type,
 		    owner_department_key = EXCLUDED.owner_department_key,
 		    status = EXCLUDED.status,
 		    updated_at = NOW()
-	`, id, deviceID, input.DeviceKey, input.ScopeKey, defaultString(input.ScopeName, input.ScopeKey), input.ScopeType, input.OwnerDepartmentKey, defaultString(input.Status, "active")); err != nil {
+	`, id, deviceID, deviceKey, parentScopeID, systemKey, scopeKey, defaultString(input.ScopeName, scopeKey), scopeType, ownerDepartmentKey, defaultString(input.Status, "active")); err != nil {
 		return DeviceScopeRecord{}, fmt.Errorf("upsert device scope: %w", err)
 	}
 	var result DeviceScopeRecord
 	if err := r.db.QueryRowContext(ctx, `
-		SELECT id, COALESCE(device_id, ''), device_key, scope_key, scope_name, scope_type, COALESCE(owner_department_key, ''), status
-		FROM device_scopes
-		WHERE id = $1
-	`, id).Scan(&result.ID, &result.DeviceID, &result.DeviceKey, &result.ScopeKey, &result.ScopeName, &result.ScopeType, &result.OwnerDepartmentKey, &result.Status); err != nil {
+		SELECT
+			ds.id,
+			COALESCE(ds.device_id, ''),
+			ds.device_key,
+			COALESCE(ds.parent_scope_id, ''),
+			COALESCE(parent.scope_key, ''),
+			COALESCE(ds.system_key, ''),
+			COALESCE(ss.name, ''),
+			ds.scope_key,
+			ds.scope_name,
+			ds.scope_type,
+			COALESCE(ds.owner_department_key, ''),
+			ds.status
+		FROM device_scopes ds
+		LEFT JOIN device_scopes parent ON parent.id = ds.parent_scope_id
+		LEFT JOIN scope_systems ss ON ss.key = ds.system_key
+		WHERE ds.id = $1
+	`, id).Scan(
+		&result.ID, &result.DeviceID, &result.DeviceKey, &result.ParentScopeID, &result.ParentScopeKey,
+		&result.SystemKey, &result.SystemName, &result.ScopeKey, &result.ScopeName, &result.ScopeType, &result.OwnerDepartmentKey, &result.Status,
+	); err != nil {
 		return DeviceScopeRecord{}, fmt.Errorf("reload device scope: %w", err)
 	}
 	return result, nil
+}
+
+func (r *Repository) ScopeSystems(ctx context.Context) (ScopeSystemList, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT ss.key, ss.name, ss.description, ss.status, COUNT(ds.id) AS in_use_count
+		FROM scope_systems ss
+		LEFT JOIN device_scopes ds ON ds.system_key = ss.key
+		GROUP BY ss.key, ss.name, ss.description, ss.status
+		ORDER BY ss.key
+	`)
+	if err != nil {
+		return ScopeSystemList{}, fmt.Errorf("query scope systems: %w", err)
+	}
+	defer rows.Close()
+	result := ScopeSystemList{Rows: []ScopeSystemRecord{}}
+	for rows.Next() {
+		var row ScopeSystemRecord
+		if err := rows.Scan(&row.Key, &row.Name, &row.Description, &row.Status, &row.InUseCount); err != nil {
+			return ScopeSystemList{}, fmt.Errorf("scan scope system: %w", err)
+		}
+		result.Rows = append(result.Rows, row)
+	}
+	return result, rows.Err()
+}
+
+func (r *Repository) UpsertScopeSystem(ctx context.Context, input ScopeSystemUpsertInput) (ScopeSystemRecord, error) {
+	if _, err := r.db.ExecContext(ctx, `
+		INSERT INTO scope_systems (key, name, description, status, updated_at)
+		VALUES ($1, $2, $3, $4, NOW())
+		ON CONFLICT (key) DO UPDATE
+		SET name = EXCLUDED.name,
+		    description = EXCLUDED.description,
+		    status = EXCLUDED.status,
+		    updated_at = NOW()
+	`, input.Key, input.Name, input.Description, defaultString(input.Status, "active")); err != nil {
+		return ScopeSystemRecord{}, fmt.Errorf("upsert scope system: %w", err)
+	}
+	var result ScopeSystemRecord
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT ss.key, ss.name, ss.description, ss.status, COUNT(ds.id) AS in_use_count
+		FROM scope_systems ss
+		LEFT JOIN device_scopes ds ON ds.system_key = ss.key
+		WHERE ss.key = $1
+		GROUP BY ss.key, ss.name, ss.description, ss.status
+	`, input.Key).Scan(&result.Key, &result.Name, &result.Description, &result.Status, &result.InUseCount); err != nil {
+		return ScopeSystemRecord{}, fmt.Errorf("reload scope system: %w", err)
+	}
+	return result, nil
+}
+
+func (r *Repository) DeleteScopeSystem(ctx context.Context, key string) error {
+	var inUse int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM device_scopes WHERE system_key = $1`, key).Scan(&inUse); err != nil {
+		return fmt.Errorf("count scope system usage: %w", err)
+	}
+	if inUse > 0 {
+		return fmt.Errorf("scope system is in use by %d scope(s)", inUse)
+	}
+	result, err := r.db.ExecContext(ctx, `DELETE FROM scope_systems WHERE key = $1`, key)
+	if err != nil {
+		return fmt.Errorf("delete scope system: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err == nil && affected == 0 {
+		return fmt.Errorf("scope system not found: %s", key)
+	}
+	return nil
 }
 
 func (r *Repository) UpsertLocation(ctx context.Context, input LocationUpsertInput) (LocationSummary, error) {

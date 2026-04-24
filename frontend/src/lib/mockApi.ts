@@ -22,6 +22,8 @@ import type {
   ReservationListResponse,
   DeviceScopeListResponse,
   DeviceScopeUpsertInput,
+  ScopeSystemListResponse,
+  ScopeSystemUpsertInput,
   DeviceListResponse,
   ShortageListResponse,
   BudgetCategorySummary,
@@ -199,12 +201,30 @@ const reservations: ReservationListResponse = {
 const deviceScopes: DeviceScopeListResponse = {
   rows: [
     {
+      id: 'ds-er2-controls',
+      deviceId: 'device-er2',
+      deviceKey: 'ER2',
+      parentScopeId: '',
+      parentScopeKey: '',
+      systemKey: 'controls',
+      systemName: 'Control System',
+      scopeKey: 'controls',
+      scopeName: 'Control System',
+      scopeType: 'system',
+      ownerDepartmentKey: 'controls',
+      status: 'active',
+    },
+    {
       id: 'ds-er2-powerboard',
       deviceId: 'device-er2',
       deviceKey: 'ER2',
+      parentScopeId: 'ds-er2-controls',
+      parentScopeKey: 'controls',
+      systemKey: 'controls',
+      systemName: 'Control System',
       scopeKey: 'powerboard',
       scopeName: 'Power Board',
-      scopeType: 'subsystem',
+      scopeType: 'assembly',
       ownerDepartmentKey: 'controls',
       status: 'active',
     },
@@ -212,22 +232,66 @@ const deviceScopes: DeviceScopeListResponse = {
       id: 'ds-er2-optics',
       deviceId: 'device-er2',
       deviceKey: 'ER2',
+      parentScopeId: '',
+      parentScopeKey: '',
+      systemKey: 'optics',
+      systemName: 'Optical System',
       scopeKey: 'optics',
-      scopeName: 'Optics',
-      scopeType: 'subsystem',
+      scopeName: 'Optical System',
+      scopeType: 'system',
       ownerDepartmentKey: 'optics',
+      status: 'active',
+    },
+    {
+      id: 'ds-er2-lens-barrel',
+      deviceId: 'device-er2',
+      deviceKey: 'ER2',
+      parentScopeId: 'ds-er2-optics',
+      parentScopeKey: 'optics',
+      systemKey: 'optics',
+      systemName: 'Optical System',
+      scopeKey: 'lens-barrel',
+      scopeName: 'Lens Barrel Assembly',
+      scopeType: 'assembly',
+      ownerDepartmentKey: 'optics',
+      status: 'active',
+    },
+    {
+      id: 'ds-mk4-mechanical',
+      deviceId: 'device-mk4',
+      deviceKey: 'MK4',
+      parentScopeId: '',
+      parentScopeKey: '',
+      systemKey: 'mechanical',
+      systemName: 'Mechanical System',
+      scopeKey: 'mechanical',
+      scopeName: 'Mechanical System',
+      scopeType: 'system',
+      ownerDepartmentKey: 'mechanical',
       status: 'active',
     },
     {
       id: 'ds-mk4-cabinet',
       deviceId: 'device-mk4',
       deviceKey: 'MK4',
+      parentScopeId: 'ds-mk4-mechanical',
+      parentScopeKey: 'mechanical',
+      systemKey: 'mechanical',
+      systemName: 'Mechanical System',
       scopeKey: 'cabinet',
       scopeName: 'Cabinet',
-      scopeType: 'subsystem',
+      scopeType: 'assembly',
       ownerDepartmentKey: 'mechanical',
       status: 'active',
     },
+  ],
+}
+
+let scopeSystems: ScopeSystemListResponse = {
+  rows: [
+    { key: 'optics', name: 'Optical System', description: 'Optical engineering system boundary', status: 'active', inUseCount: 2 },
+    { key: 'mechanical', name: 'Mechanical System', description: 'Mechanical engineering system boundary', status: 'active', inUseCount: 2 },
+    { key: 'controls', name: 'Control System', description: 'Control engineering system boundary', status: 'active', inUseCount: 2 },
   ],
 }
 
@@ -868,6 +932,13 @@ export async function fetchDeviceScopes() {
   return fetchWithFallback<DeviceScopeListResponse>('/api/v1/operator/master-data/scopes', deviceScopes, true)
 }
 
+export async function fetchScopeSystems() {
+  for (const system of scopeSystems.rows) {
+    system.inUseCount = deviceScopes.rows.filter((row) => row.systemKey === system.key).length
+  }
+  return fetchWithFallback<ScopeSystemListResponse>('/api/v1/operator/master-data/systems', scopeSystems, true)
+}
+
 export async function fetchDevices() {
   return fetchWithFallback<DeviceListResponse>('/api/v1/operator/master-data/devices', devices, true)
 }
@@ -886,15 +957,43 @@ export async function upsertDeviceScope(input: DeviceScopeUpsertInput) {
     const payload = await response.json()
     return payload.data
   } catch {
+    const parent = deviceScopes.rows.find((row) => row.id === input.parentScopeId)
+    const normalizedScopeType = input.scopeType || 'assembly'
+    const resolvedSystemKey =
+      normalizedScopeType === 'system'
+        ? input.systemKey || input.scopeKey
+        : parent?.systemKey || ''
+    if (normalizedScopeType === 'system') {
+      if (input.parentScopeId) {
+        throw new Error('system scopes cannot have a parentScopeId')
+      }
+      if (!resolvedSystemKey || input.scopeKey !== resolvedSystemKey) {
+        throw new Error('system scope key must match systemKey')
+      }
+    } else {
+      if (!parent) {
+        throw new Error('non-system scopes require a parentScopeId')
+      }
+      if (parent.deviceKey !== input.deviceKey) {
+        throw new Error(`parent scope belongs to device ${parent.deviceKey}`)
+      }
+      if (input.systemKey && input.systemKey !== parent.systemKey) {
+        throw new Error(`child scope systemKey must match parent systemKey ${parent.systemKey}`)
+      }
+    }
     const device = devices.rows.find((row) => row.deviceKey === input.deviceKey)
     const record = {
       id: input.id || `ds-${input.deviceKey.toLowerCase()}-${input.scopeKey.toLowerCase()}`,
       deviceId: input.deviceId || device?.id || `device-${input.deviceKey.toLowerCase()}`,
       deviceKey: input.deviceKey,
+      parentScopeId: input.parentScopeId || '',
+      parentScopeKey: parent?.scopeKey || '',
+      systemKey: resolvedSystemKey,
+      systemName: scopeSystems.rows.find((row) => row.key === resolvedSystemKey)?.name || parent?.systemName || '',
       scopeKey: input.scopeKey,
       scopeName: input.scopeName,
-      scopeType: input.scopeType,
-      ownerDepartmentKey: input.ownerDepartmentKey,
+      scopeType: normalizedScopeType,
+      ownerDepartmentKey: input.ownerDepartmentKey || (normalizedScopeType === 'system' ? resolvedSystemKey : ''),
       status: input.status,
     }
     const index = deviceScopes.rows.findIndex((row) => row.id === record.id)
@@ -904,6 +1003,53 @@ export async function upsertDeviceScope(input: DeviceScopeUpsertInput) {
       deviceScopes.rows.unshift(record)
     }
     return delay(record)
+  }
+}
+
+export async function upsertScopeSystem(input: ScopeSystemUpsertInput) {
+  try {
+    const response = await fetch(`${config.apiBaseUrl}/api/v1/admin/master-data/systems`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authorizationHeaders() },
+      body: JSON.stringify(input),
+    })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null)
+      throw new Error((payload as { error?: string } | null)?.error ?? `request failed: ${response.status}`)
+    }
+    const payload = await response.json()
+    return payload.data
+  } catch {
+    const existing = scopeSystems.rows.findIndex((row) => row.key === input.key)
+    const current = existing >= 0 ? scopeSystems.rows[existing] : undefined
+    const record = { ...input, inUseCount: current?.inUseCount ?? 0 }
+    if (existing >= 0) {
+      scopeSystems.rows[existing] = record
+    } else {
+      scopeSystems.rows.unshift(record)
+    }
+    return delay(record)
+  }
+}
+
+export async function deleteScopeSystem(key: string) {
+  try {
+    const response = await fetch(`${config.apiBaseUrl}/api/v1/admin/master-data/systems/${encodeURIComponent(key)}`, {
+      method: 'DELETE',
+      headers: authorizationHeaders(),
+    })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null)
+      throw new Error((payload as { error?: string } | null)?.error ?? `request failed: ${response.status}`)
+    }
+    return await response.json()
+  } catch {
+    const inUse = deviceScopes.rows.filter((row) => row.systemKey === key).length
+    if (inUse > 0) {
+      throw new Error(`scope system is in use by ${inUse} scope(s)`)
+    }
+    scopeSystems = { rows: scopeSystems.rows.filter((row) => row.key !== key) }
+    return delay({ status: 'deleted' })
   }
 }
 

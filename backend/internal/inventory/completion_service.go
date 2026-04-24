@@ -3,6 +3,7 @@ package inventory
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 func (s *Service) Requirements(ctx context.Context, device, scope string) (RequirementList, error) {
@@ -206,10 +207,48 @@ func (s *Service) DeviceScopes(ctx context.Context) (DeviceScopeList, error) {
 	return s.repo.DeviceScopes(ctx)
 }
 
+func (s *Service) ScopeSystems(ctx context.Context) (ScopeSystemList, error) {
+	return s.repo.ScopeSystems(ctx)
+}
+
+func (s *Service) UpsertScopeSystem(ctx context.Context, input ScopeSystemUpsertInput) (ScopeSystemRecord, error) {
+	if input.Key == "" || input.Name == "" {
+		return ScopeSystemRecord{}, fmt.Errorf("key and name are required")
+	}
+	return s.repo.UpsertScopeSystem(ctx, input)
+}
+
+func (s *Service) DeleteScopeSystem(ctx context.Context, key string) error {
+	if key == "" {
+		return fmt.Errorf("scope system key is required")
+	}
+	return s.repo.DeleteScopeSystem(ctx, key)
+}
+
 func (s *Service) UpsertDeviceScope(ctx context.Context, input DeviceScopeUpsertInput) (DeviceScopeRecord, error) {
 	if input.DeviceKey == "" || input.ScopeKey == "" {
 		return DeviceScopeRecord{}, fmt.Errorf("deviceKey and scopeKey are required")
 	}
+	scopeType := normalizeDeviceScopeType(defaultString(input.ScopeType, "assembly"))
+	if !isValidDeviceScopeType(scopeType) {
+		return DeviceScopeRecord{}, fmt.Errorf("unsupported scopeType: %s", input.ScopeType)
+	}
+	if scopeType == "system" {
+		if strings.TrimSpace(input.ParentScopeID) != "" {
+			return DeviceScopeRecord{}, fmt.Errorf("system scopes cannot have a parentScopeId")
+		}
+		scopeKey := normalizeLookupKey(input.ScopeKey)
+		systemKey := normalizeLookupKey(defaultString(input.SystemKey, input.ScopeKey))
+		if scopeKey == "" || systemKey == "" {
+			return DeviceScopeRecord{}, fmt.Errorf("system scopes require a valid systemKey")
+		}
+		if scopeKey != systemKey {
+			return DeviceScopeRecord{}, fmt.Errorf("system scope key must match systemKey")
+		}
+	} else if strings.TrimSpace(input.ParentScopeID) == "" {
+		return DeviceScopeRecord{}, fmt.Errorf("non-system scopes require a parentScopeId")
+	}
+	input.ScopeType = scopeType
 	return s.repo.UpsertDeviceScope(ctx, input)
 }
 

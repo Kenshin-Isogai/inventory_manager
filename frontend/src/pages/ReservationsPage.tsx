@@ -1,5 +1,5 @@
 import { useSearchParams } from 'react-router-dom'
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -16,8 +16,9 @@ import { DeviceScopeFilters } from '@/components/context/DeviceScopeFilters'
 import { ItemInfoPopover } from '@/components/ItemInfoPopover'
 import { CollapsibleFilterBar } from '@/components/CollapsibleFilterBar'
 import { useReservations } from '@/hooks/useReservations'
+import { useDeviceScopes } from '@/hooks/useDeviceScopes'
 import { exportReservationsCSV } from '@/lib/additionalApi'
-import { Download } from 'lucide-react'
+import { Download, ChevronRight, Layers, Package, Box, MapPin, ClipboardList, Info } from 'lucide-react'
 
 function getStatusBadgeVariant(status: string) {
   switch (status.toLowerCase()) {
@@ -33,14 +34,50 @@ function getStatusBadgeVariant(status: string) {
   }
 }
 
+function getScopeIcon(type: string) {
+  switch (type) {
+    case 'system': return <Layers className="w-3 h-3 text-blue-500" />
+    case 'assembly': return <Package className="w-3 h-3 text-orange-500" />
+    case 'module': return <Box className="w-3 h-3 text-green-500" />
+    case 'area': return <MapPin className="w-3 h-3 text-purple-500" />
+    case 'work_package': return <ClipboardList className="w-3 h-3 text-gray-500" />
+    default: return <Info className="w-3 h-3" />
+  }
+}
+
 export function ReservationsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const device = searchParams.get('device') ?? ''
   const scope = searchParams.get('scope') ?? ''
+  const system = searchParams.get('system') ?? ''
   const [search, setSearch] = useState('')
   const { data } = useReservations(device, scope)
+  const { data: scopeData } = useDeviceScopes()
+
+  const scopes = scopeData?.rows ?? []
+
+  // Helper to get scope breadcrumbs
+  const getScopePath = useMemo(() => {
+    const cache: Record<string, string[]> = {}
+    const resolve = (id: string): string[] => {
+      if (cache[id]) return cache[id]
+      const s = scopes.find(x => x.id === id || (x.deviceKey === device && x.scopeKey === id))
+      if (!s) return [id]
+      if (!s.parentScopeId) return [s.scopeName || s.scopeKey]
+      const p = resolve(s.parentScopeId)
+      cache[id] = [...p, s.scopeName || s.scopeKey]
+      return cache[id]
+    }
+    return resolve
+  }, [scopes, device])
 
   const filteredRows = (data?.rows ?? []).filter((row) => {
+    // Apply system filter if present
+    if (system) {
+      const s = scopes.find(x => x.deviceKey === row.device && x.scopeKey === row.scope)
+      if (s?.systemKey !== system) return false
+    }
+
     if (!search) return true
     const q = search.toLowerCase()
     return (
@@ -50,13 +87,14 @@ export function ReservationsPage() {
     )
   })
 
-  const updateContext = (key: 'device' | 'scope', value: string) => {
+  const updateContext = (key: 'device' | 'scope' | 'system', value: string) => {
     const next = new URLSearchParams(searchParams)
     if (value.trim() === '') {
       next.delete(key)
     } else {
       next.set(key, value)
     }
+    if (key !== 'scope') next.delete('scope')
     setSearchParams(next, { replace: true })
   }
 
@@ -74,7 +112,7 @@ export function ReservationsPage() {
         <div className="space-y-2">
           <h1 className="text-3xl font-bold tracking-tight">Reservations</h1>
           <p className="text-muted-foreground">
-            Reservation visibility {device || scope ? `filtered by Device: ${device || 'all'}, Scope: ${scope || 'all'}` : 'for all contexts'}.
+            Reservation visibility with hierarchical context.
           </p>
         </div>
         <Button onClick={() => void handleExport()} size="sm" variant="outline" className="gap-2">
@@ -89,8 +127,10 @@ export function ReservationsPage() {
             <DeviceScopeFilters
               device={device}
               scope={scope}
+              system={system}
               onDeviceChange={(value) => updateContext('device', value)}
               onScopeChange={(value) => updateContext('scope', value)}
+              onSystemChange={(value) => updateContext('system', value)}
             />
           </div>
         </CardContent>
@@ -111,7 +151,7 @@ export function ReservationsPage() {
                   <TableHead>Description</TableHead>
                   <TableHead className="w-16 text-right">Qty</TableHead>
                   <TableHead>Device</TableHead>
-                  <TableHead>Scope</TableHead>
+                  <TableHead>Scope Path</TableHead>
                   <TableHead className="w-28">Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -123,28 +163,44 @@ export function ReservationsPage() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredRows.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell className="font-medium text-xs text-muted-foreground">{row.id.slice(0, 8)}</TableCell>
-                      <TableCell>
-                        <ItemInfoPopover
-                          itemNumber={row.itemNumber}
-                          description={row.description}
-                        />
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground max-w-[10rem] truncate">
-                        {row.description}
-                      </TableCell>
-                      <TableCell className="text-sm text-right tabular-nums">{row.quantity}</TableCell>
-                      <TableCell className="text-sm">{row.device}</TableCell>
-                      <TableCell className="text-sm">{row.scope}</TableCell>
-                      <TableCell>
-                        <Badge variant={getStatusBadgeVariant(row.status)} className="text-xs">
-                          {row.status.replace(/_/g, ' ')}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))
+                  filteredRows.map((row) => {
+                    const s = scopes.find(x => x.deviceKey === row.device && x.scopeKey === row.scope)
+                    const path = getScopePath(s?.id || row.scope)
+                    return (
+                      <TableRow key={row.id}>
+                        <TableCell className="font-medium text-xs text-muted-foreground">{row.id.slice(0, 8)}</TableCell>
+                        <TableCell>
+                          <ItemInfoPopover
+                            itemNumber={row.itemNumber}
+                            description={row.description}
+                          />
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground max-w-[10rem] truncate">
+                          {row.description}
+                        </TableCell>
+                        <TableCell className="text-sm text-right tabular-nums">{row.quantity}</TableCell>
+                        <TableCell className="text-sm font-mono">{row.device}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1 flex-wrap">
+                            {s && getScopeIcon(s.scopeType)}
+                            {path.map((segment, idx) => (
+                              <span key={idx} className="flex items-center gap-1">
+                                {idx > 0 && <ChevronRight className="w-2.5 h-2.5 text-muted-foreground" />}
+                                <span className={idx === path.length - 1 ? 'text-sm font-medium' : 'text-[10px] text-muted-foreground uppercase'}>
+                                  {segment}
+                                </span>
+                              </span>
+                            ))}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={getStatusBadgeVariant(row.status)} className="text-xs">
+                            {row.status.replace(/_/g, ' ')}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })
                 )}
               </TableBody>
             </Table>

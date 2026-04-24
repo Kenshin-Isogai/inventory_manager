@@ -99,6 +99,10 @@ export type DeviceScopeRecord = {
   id: string
   deviceId: string
   deviceKey: string
+  parentScopeId: string
+  parentScopeKey: string
+  systemKey: string
+  systemName: string
   scopeKey: string
   scopeName: string
   scopeType: string
@@ -114,10 +118,31 @@ export type DeviceScopeUpsertInput = {
   id?: string
   deviceId?: string
   deviceKey: string
+  parentScopeId?: string
+  systemKey?: string
   scopeKey: string
   scopeName: string
   scopeType: string
   ownerDepartmentKey: string
+  status: string
+}
+
+export type ScopeSystemRecord = {
+  key: string
+  name: string
+  description: string
+  status: string
+  inUseCount: number
+}
+
+export type ScopeSystemListResponse = {
+  rows: ScopeSystemRecord[]
+}
+
+export type ScopeSystemUpsertInput = {
+  key: string
+  name: string
+  description: string
   status: string
 }
 

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { ChangeEvent } from 'react'
+import type { ChangeEvent, FormEvent } from 'react'
 import { useSWRConfig } from 'swr'
 
 import { Button } from '@/components/ui/button'
@@ -16,8 +16,9 @@ import { useRoles } from '@/hooks/useRoles'
 import { useUsers } from '@/hooks/useUsers'
 import { useBootstrap } from '@/hooks/useBootstrap'
 import { useMasterData } from '@/hooks/useMasterData'
+import { useScopeSystems } from '@/hooks/useScopeSystems'
 import { useProcurementProjects } from '@/hooks/useProcurementProjects'
-import { approveUser, exportMasterDataCSV, importMasterDataCSV, refreshProcurementProjects, rejectUser } from '@/lib/mockApi'
+import { approveUser, deleteScopeSystem, exportMasterDataCSV, importMasterDataCSV, refreshProcurementProjects, rejectUser, upsertScopeSystem } from '@/lib/mockApi'
 import type { RoleKey } from '@/types'
 
 type AdminPageProps = {
@@ -27,6 +28,7 @@ type AdminPageProps = {
 export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
   const { data } = useBootstrap()
   const { data: masterData } = useMasterData()
+  const { data: scopeSystems } = useScopeSystems()
   const { data: projects } = useProcurementProjects()
   const { data: users } = useUsers()
   const { data: roles } = useRoles()
@@ -34,6 +36,11 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
   const [message, setMessage] = useState('')
   const [refreshingProjects, setRefreshingProjects] = useState(false)
   const [pendingRoles, setPendingRoles] = useState<Record<string, RoleKey[]>>({})
+  const [systemKey, setSystemKey] = useState('')
+  const [systemName, setSystemName] = useState('')
+  const [systemDescription, setSystemDescription] = useState('')
+  const [systemStatus, setSystemStatus] = useState('active')
+  const [savingSystem, setSavingSystem] = useState(false)
 
   async function handleExport(exportType: 'items' | 'aliases') {
     const csv = await exportMasterDataCSV(exportType)
@@ -67,6 +74,50 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
     } finally {
       setRefreshingProjects(false)
     }
+  }
+
+  function editSystem(key: string) {
+    const system = scopeSystems?.rows.find((row) => row.key === key)
+    if (!system) {
+      return
+    }
+    setSystemKey(system.key)
+    setSystemName(system.name)
+    setSystemDescription(system.description)
+    setSystemStatus(system.status || 'active')
+  }
+
+  function resetSystemForm() {
+    setSystemKey('')
+    setSystemName('')
+    setSystemDescription('')
+    setSystemStatus('active')
+  }
+
+  async function handleSystemSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setSavingSystem(true)
+    setMessage('')
+    try {
+      await upsertScopeSystem({
+        key: systemKey,
+        name: systemName,
+        description: systemDescription,
+        status: systemStatus,
+      })
+      await Promise.all([mutate('scope-systems'), mutate('device-scopes')])
+      setMessage(`Saved system ${systemKey}`)
+      resetSystemForm()
+    } finally {
+      setSavingSystem(false)
+    }
+  }
+
+  async function handleSystemDelete(key: string) {
+    setMessage('')
+    await deleteScopeSystem(key)
+    await Promise.all([mutate('scope-systems'), mutate('device-scopes')])
+    setMessage(`Deleted system ${key}`)
   }
 
   const latestProjectSync = projects?.reduce((latest, project) => (project.syncedAt > latest ? project.syncedAt : latest), '') ?? ''
@@ -379,10 +430,11 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
           </div>
 
           <Tabs defaultValue="items" className="space-y-4">
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="items">Items</TabsTrigger>
               <TabsTrigger value="suppliers">Suppliers</TabsTrigger>
               <TabsTrigger value="aliases">Aliases</TabsTrigger>
+              <TabsTrigger value="systems">Systems</TabsTrigger>
             </TabsList>
 
             <TabsContent value="items">
@@ -528,6 +580,97 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
                   </div>
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            <TabsContent value="systems">
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>System Catalog</CardTitle>
+                    <CardDescription>Engineering system categories used by scope hierarchy.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="border rounded-lg overflow-hidden">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Key</TableHead>
+                            <TableHead>Name</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>In Use</TableHead>
+                            <TableHead>Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {scopeSystems?.rows.map((system) => (
+                            <TableRow key={system.key}>
+                              <TableCell className="font-mono text-sm">{system.key}</TableCell>
+                              <TableCell>
+                                <p className="font-medium">{system.name}</p>
+                                {system.description ? <p className="text-xs text-muted-foreground">{system.description}</p> : null}
+                              </TableCell>
+                              <TableCell><Badge variant={system.status === 'active' ? 'default' : 'secondary'}>{system.status}</Badge></TableCell>
+                              <TableCell>{system.inUseCount}</TableCell>
+                              <TableCell>
+                                <div className="flex gap-2">
+                                  <Button type="button" variant="outline" size="sm" onClick={() => editSystem(system.key)}>
+                                    Edit
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={system.inUseCount > 0}
+                                    onClick={() => void handleSystemDelete(system.key)}
+                                  >
+                                    Delete
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>System Editor</CardTitle>
+                    <CardDescription>Create or update an engineering system category.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <form onSubmit={handleSystemSubmit} className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="system-key">Key</Label>
+                        <Input id="system-key" value={systemKey} onChange={(event) => setSystemKey(event.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="system-name">Name</Label>
+                        <Input id="system-name" value={systemName} onChange={(event) => setSystemName(event.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="system-description">Description</Label>
+                        <Input id="system-description" value={systemDescription} onChange={(event) => setSystemDescription(event.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="system-status">Status</Label>
+                        <Input id="system-status" value={systemStatus} onChange={(event) => setSystemStatus(event.target.value)} />
+                      </div>
+                      {message && <p className="text-sm text-green-600">{message}</p>}
+                      <div className="flex gap-2">
+                        <Button type="submit" disabled={savingSystem || !systemKey || !systemName}>
+                          {savingSystem ? 'Saving...' : 'Save System'}
+                        </Button>
+                        <Button type="button" variant="outline" onClick={resetSystemForm}>
+                          Reset
+                        </Button>
+                      </div>
+                    </form>
+                  </CardContent>
+                </Card>
+              </div>
             </TabsContent>
           </Tabs>
         </TabsContent>

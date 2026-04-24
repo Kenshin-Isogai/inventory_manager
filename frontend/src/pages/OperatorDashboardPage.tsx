@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import type { FormEvent } from 'react'
 import { useSWRConfig } from 'swr'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { useDashboard } from '@/hooks/useDashboard'
 import { useDeviceScopes } from '@/hooks/useDeviceScopes'
 import { useDevices } from '@/hooks/useDevices'
+import { useScopeSystems } from '@/hooks/useScopeSystems'
 import { upsertDeviceScope } from '@/lib/mockApi'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -25,22 +26,38 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { AlertCircle } from 'lucide-react'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { AlertCircle, ChevronRight, Layers, Package, Box, MapPin, ClipboardList, Info } from 'lucide-react'
 
 const NEW_SCOPE = '__new__'
-const scopeTypeOptions = ['device_root', 'subsystem', 'module', 'area', 'work_package']
+const ROOT_SCOPE = '__root__'
+const scopeTypeOptions = ['system', 'assembly', 'module', 'area', 'work_package']
 const statusOptions = ['active', 'inactive']
+
+function getScopeIcon(type: string) {
+  switch (type) {
+    case 'system': return <Layers className="w-4 h-4 text-blue-500" />
+    case 'assembly': return <Package className="w-4 h-4 text-orange-500" />
+    case 'module': return <Box className="w-4 h-4 text-green-500" />
+    case 'area': return <MapPin className="w-4 h-4 text-purple-500" />
+    case 'work_package': return <ClipboardList className="w-4 h-4 text-gray-500" />
+    default: return <Info className="w-4 h-4" />
+  }
+}
 
 export function OperatorDashboardPage() {
   const { data } = useDashboard()
   const { data: deviceScopeData } = useDeviceScopes()
   const { data: deviceData } = useDevices()
+  const { data: scopeSystemData } = useScopeSystems()
   const { mutate } = useSWRConfig()
   const [selectedScopeId, setSelectedScopeId] = useState(NEW_SCOPE)
   const [deviceKey, setDeviceKey] = useState('')
+  const [parentScopeId, setParentScopeId] = useState('')
+  const [systemKey, setSystemKey] = useState('')
   const [scopeKey, setScopeKey] = useState('')
   const [scopeName, setScopeName] = useState('')
-  const [scopeType, setScopeType] = useState('subsystem')
+  const [scopeType, setScopeType] = useState('system')
   const [ownerDepartmentKey, setOwnerDepartmentKey] = useState('')
   const [status, setStatus] = useState('active')
   const [message, setMessage] = useState('')
@@ -48,14 +65,36 @@ export function OperatorDashboardPage() {
 
   const scopes = deviceScopeData?.rows ?? []
   const devices = deviceData?.rows.filter((row) => row.status !== 'inactive') ?? []
+  const scopeSystems = scopeSystemData?.rows.filter((row) => row.status !== 'inactive') ?? []
   const selectedDeviceKey = deviceKey || devices[0]?.deviceKey || ''
+  const selectedParentScope = scopes.find((row) => row.id === parentScopeId)
+  const isSystemScope = scopeType === 'system'
+  const effectiveSystemKey = isSystemScope ? systemKey : selectedParentScope?.systemKey || ''
+  const effectiveSystemName =
+    scopeSystems.find((row) => row.key === effectiveSystemKey)?.name || selectedParentScope?.systemName || ''
+  
+  const parentScopeOptions = useMemo(() => {
+    return scopes
+      .filter((row) => row.deviceKey === selectedDeviceKey && row.id !== selectedScopeId)
+      .sort((left, right) => `${left.parentScopeKey}/${left.scopeKey}`.localeCompare(`${right.parentScopeKey}/${right.scopeKey}`))
+  }, [scopes, selectedDeviceKey, selectedScopeId])
+
+  // Function to get full path for a scope
+  const getScopePath = (scopeId: string): string[] => {
+    const scope = scopes.find(s => s.id === scopeId)
+    if (!scope) return []
+    if (!scope.parentScopeId) return [scope.scopeName || scope.scopeKey]
+    return [...getScopePath(scope.parentScopeId), scope.scopeName || scope.scopeKey]
+  }
 
   function resetForm(nextDeviceKey?: string) {
     setSelectedScopeId(NEW_SCOPE)
     setDeviceKey(nextDeviceKey ?? devices[0]?.deviceKey ?? '')
+    setParentScopeId('')
+    setSystemKey('')
     setScopeKey('')
     setScopeName('')
-    setScopeType('subsystem')
+    setScopeType('system')
     setOwnerDepartmentKey('')
     setStatus('active')
   }
@@ -71,9 +110,11 @@ export function OperatorDashboardPage() {
       return
     }
     setDeviceKey(selected.deviceKey)
+    setParentScopeId(selected.parentScopeId)
+    setSystemKey(selected.systemKey)
     setScopeKey(selected.scopeKey)
     setScopeName(selected.scopeName)
-    setScopeType(selected.scopeType || 'subsystem')
+    setScopeType(selected.scopeType || 'assembly')
     setOwnerDepartmentKey(selected.ownerDepartmentKey)
     setStatus(selected.status || 'active')
   }
@@ -86,17 +127,21 @@ export function OperatorDashboardPage() {
       await upsertDeviceScope({
         id: selectedScopeId === NEW_SCOPE ? undefined : selectedScopeId,
         deviceKey: selectedDeviceKey,
+        parentScopeId: isSystemScope ? '' : parentScopeId,
+        systemKey: effectiveSystemKey,
         scopeKey,
         scopeName,
         scopeType,
-        ownerDepartmentKey,
+        ownerDepartmentKey: isSystemScope ? ownerDepartmentKey || effectiveSystemKey : ownerDepartmentKey,
         status,
       })
-      await Promise.all([mutate('device-scopes'), mutate('devices')])
+      await Promise.all([mutate('device-scopes'), mutate('devices'), mutate('scope-systems')])
       setMessage(selectedScopeId === NEW_SCOPE ? 'Scope created.' : 'Scope updated.')
       if (selectedScopeId === NEW_SCOPE) {
         resetForm(selectedDeviceKey)
       }
+    } catch (err) {
+      setMessage(`Error: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setIsSaving(false)
     }
@@ -106,9 +151,7 @@ export function OperatorDashboardPage() {
     <div className="space-y-6 p-6">
       <div className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight">Operator Dashboard</h1>
-        <p className="text-muted-foreground">
-          Requirements, shortages, and pending follow-up.
-        </p>
+        <p className="text-muted-foreground">Requirements, shortages, and device hierarchy.</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -157,7 +200,7 @@ export function OperatorDashboardPage() {
         <Card>
           <CardHeader>
             <CardTitle>Scope Master</CardTitle>
-            <CardDescription>Operator-managed device and scope definitions used by reservations and filters.</CardDescription>
+            <CardDescription>Defined logical boundaries for each device in a hierarchical tree.</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
@@ -165,51 +208,70 @@ export function OperatorDashboardPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Device</TableHead>
-                    <TableHead>Scope Key</TableHead>
-                    <TableHead>Scope Name</TableHead>
+                    <TableHead>Path / Breadcrumb</TableHead>
                     <TableHead>Type</TableHead>
-                    <TableHead>Owner</TableHead>
+                    <TableHead>Department</TableHead>
                     <TableHead>Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {scopes.map((row) => (
-                    <TableRow
-                      key={row.id}
-                      className="cursor-pointer"
-                      onClick={() => handleTargetChange(row.id)}
-                    >
-                      <TableCell className="font-medium">{row.deviceKey}</TableCell>
-                      <TableCell>{row.scopeKey}</TableCell>
-                      <TableCell>{row.scopeName}</TableCell>
-                      <TableCell>{row.scopeType || '-'}</TableCell>
-                      <TableCell>{row.ownerDepartmentKey || '-'}</TableCell>
-                      <TableCell>
-                        <Badge variant={row.status === 'active' ? 'default' : 'secondary'}>{row.status}</Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {scopes.map((row) => {
+                    const path = getScopePath(row.id)
+                    return (
+                      <TableRow
+                        key={row.id}
+                        className={`cursor-pointer transition-colors ${selectedScopeId === row.id ? 'bg-primary/5' : ''}`}
+                        onClick={() => handleTargetChange(row.id)}
+                      >
+                        <TableCell className="font-mono text-sm">{row.deviceKey}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {path.map((segment, idx) => (
+                              <span key={idx} className="flex items-center gap-1.5">
+                                {idx > 0 && <ChevronRight className="w-3 h-3 text-muted-foreground" />}
+                                <span className={idx === path.length - 1 ? 'font-medium' : 'text-xs text-muted-foreground'}>
+                                  {segment}
+                                </span>
+                              </span>
+                            ))}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2 text-xs">
+                            {getScopeIcon(row.scopeType)}
+                            <span className="capitalize">{row.scopeType.replace('_', ' ')}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-xs font-mono">{row.ownerDepartmentKey || '-'}</TableCell>
+                        <TableCell>
+                          <Badge variant={row.status === 'active' ? 'default' : 'secondary'} className="text-[10px] uppercase">
+                            {row.status}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
                 </TableBody>
               </Table>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className={selectedScopeId === NEW_SCOPE ? 'border-primary/50 shadow-md' : ''}>
           <CardHeader>
-            <CardTitle>Scope Editor</CardTitle>
-            <CardDescription>Create a new scope or update an existing one.</CardDescription>
+            <CardTitle>{selectedScopeId === NEW_SCOPE ? 'New Node' : 'Edit Node'}</CardTitle>
+            <CardDescription>Manage the hierarchy entry for the selected device.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent>
             <form onSubmit={handleScopeSubmit} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="scope-record">Target</Label>
+                <Label htmlFor="scope-record">Selection</Label>
                 <Select value={selectedScopeId} onValueChange={handleTargetChange}>
                   <SelectTrigger id="scope-record">
                     <SelectValue placeholder="Select target scope" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={NEW_SCOPE}>Create new scope</SelectItem>
+                    <SelectItem value={NEW_SCOPE}>+ Create new node</SelectItem>
                     {scopes.map((row) => (
                       <SelectItem key={row.id} value={row.id}>
                         {row.deviceKey} / {row.scopeName || row.scopeKey}
@@ -221,7 +283,14 @@ export function OperatorDashboardPage() {
 
               <div className="space-y-2">
                 <Label htmlFor="device-key">Device</Label>
-                <Select value={selectedDeviceKey} onValueChange={setDeviceKey}>
+                <Select
+                  value={selectedDeviceKey}
+                  onValueChange={(value) => {
+                    setDeviceKey(value)
+                    setParentScopeId('')
+                    setSystemKey('')
+                  }}
+                >
                   <SelectTrigger id="device-key">
                     <SelectValue placeholder="Select a device" />
                   </SelectTrigger>
@@ -235,68 +304,180 @@ export function OperatorDashboardPage() {
                 </Select>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="scope-key">Scope Key</Label>
-                  <Input id="scope-key" value={scopeKey} onChange={(event) => setScopeKey(event.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="scope-name">Scope Name</Label>
-                  <Input id="scope-name" value={scopeName} onChange={(event) => setScopeName(event.target.value)} />
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="scope-type">Scope Level</Label>
+                <Select
+                  value={scopeType}
+                  onValueChange={(value) => {
+                    setScopeType(value)
+                    if (value === 'system') {
+                      setParentScopeId('')
+                      if (effectiveSystemKey) {
+                        setSystemKey(effectiveSystemKey)
+                      }
+                    } else if (parentScopeId) {
+                      const parent = scopes.find((row) => row.id === parentScopeId)
+                      setSystemKey(parent?.systemKey || '')
+                    } else {
+                      setSystemKey('')
+                    }
+                  }}
+                >
+                  <SelectTrigger id="scope-type">
+                    <SelectValue placeholder="Select scope type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {scopeTypeOptions.map((opt) => (
+                      <SelectItem key={opt} value={opt}>
+                        <div className="flex items-center gap-2">
+                          {getScopeIcon(opt)}
+                          <span className="capitalize">{opt.replace('_', ' ')}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="parent-scope">Parent Node</Label>
+                <Select
+                  value={parentScopeId || ROOT_SCOPE}
+                  disabled={isSystemScope}
+                  onValueChange={(value) => {
+                    if (isSystemScope) {
+                      setParentScopeId('')
+                      return
+                    }
+                    const nextParentId = value === ROOT_SCOPE ? '' : value
+                    const parent = scopes.find((row) => row.id === nextParentId)
+                    setParentScopeId(nextParentId)
+                    if (parent?.systemKey) {
+                      setSystemKey(parent.systemKey)
+                    } else {
+                      setSystemKey('')
+                    }
+                  }}
+                >
+                  <SelectTrigger id="parent-scope">
+                    <SelectValue placeholder="Top-level scope" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ROOT_SCOPE}>Root (System nodes only)</SelectItem>
+                    {parentScopeOptions.map((row) => (
+                      <SelectItem key={row.id} value={row.id}>
+                        {row.scopeName || row.scopeKey}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="system-key">Engineering System</Label>
+                {isSystemScope ? (
+                  <Select
+                    value={systemKey}
+                    onValueChange={(value) => {
+                      const selectedSystem = scopeSystems.find((row) => row.key === value)
+                      const currentSystemName = scopeSystems.find((row) => row.key === systemKey)?.name || ''
+                      setSystemKey(value)
+                      setParentScopeId('')
+                      setScopeKey(value)
+                      if (!scopeName || scopeName === currentSystemName) {
+                        setScopeName(selectedSystem?.name || '')
+                      }
+                      if (!ownerDepartmentKey || ownerDepartmentKey === systemKey) {
+                        setOwnerDepartmentKey(value)
+                      }
+                    }}
+                  >
+                    <SelectTrigger id="system-key">
+                      <SelectValue placeholder="Select a system" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {scopeSystems.map((row) => (
+                        <SelectItem key={row.key} value={row.key}>
+                          {row.name} ({row.key})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <div className="flex items-center gap-2 p-2 border rounded-md bg-muted/30 text-sm">
+                    <Layers className="w-4 h-4 text-muted-foreground" />
+                    <span>{effectiveSystemName ? `${effectiveSystemName} (${effectiveSystemKey})` : 'Inherited from parent'}</span>
+                  </div>
+                )}
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="scope-type">Scope Type</Label>
-                  <Select value={scopeType} onValueChange={setScopeType}>
-                    <SelectTrigger id="scope-type">
-                      <SelectValue placeholder="Select scope type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {scopeTypeOptions.map((option) => (
-                        <SelectItem key={option} value={option}>
-                          {option}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="scope-key">Scope Key</Label>
+                  <Input
+                    id="scope-key"
+                    value={scopeKey}
+                    onChange={(event) => setScopeKey(event.target.value)}
+                    disabled={isSystemScope}
+                    placeholder={isSystemScope ? 'Matches system key' : 'e.g. power-box'}
+                  />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="scope-status">Status</Label>
-                  <Select value={status} onValueChange={setStatus}>
-                    <SelectTrigger id="scope-status">
-                      <SelectValue placeholder="Select status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {statusOptions.map((option) => (
-                        <SelectItem key={option} value={option}>
-                          {option}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="scope-name">Display Name</Label>
+                  <Input id="scope-name" value={scopeName} onChange={(event) => setScopeName(event.target.value)} placeholder="e.g. Power Control Box" />
                 </div>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="owner-department-key">Owner Department</Label>
+                <Label htmlFor="owner">Owner Department</Label>
                 <Input
-                  id="owner-department-key"
+                  id="owner"
                   value={ownerDepartmentKey}
                   onChange={(event) => setOwnerDepartmentKey(event.target.value)}
                   placeholder="e.g. optics, mechanical, controls"
                 />
               </div>
 
-              {message ? <p className="text-sm text-green-700">{message}</p> : null}
+              <div className="space-y-2">
+                <Label htmlFor="status">Status</Label>
+                <Select value={status} onValueChange={setStatus}>
+                  <SelectTrigger id="status">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {statusOptions.map((opt) => (
+                      <SelectItem key={opt} value={opt}>
+                        {opt}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-              <div className="flex gap-2">
-                <Button type="submit" disabled={isSaving || !selectedDeviceKey || !scopeKey || !scopeName}>
-                  {isSaving ? 'Saving...' : selectedScopeId === NEW_SCOPE ? 'Create Scope' : 'Update Scope'}
+              {message ? (
+                <Alert variant={message.startsWith('Error') ? 'destructive' : 'default'} className="py-2">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription className="text-xs">{message}</AlertDescription>
+                </Alert>
+              ) : null}
+
+              <div className="flex gap-2 pt-2">
+                <Button
+                  type="submit"
+                  className="flex-1"
+                  disabled={
+                    isSaving ||
+                    !selectedDeviceKey ||
+                    !scopeKey ||
+                    !scopeName ||
+                    !effectiveSystemKey ||
+                    (!isSystemScope && !parentScopeId)
+                  }
+                >
+                  {isSaving ? 'Saving...' : selectedScopeId === NEW_SCOPE ? 'Create Node' : 'Update Node'}
                 </Button>
                 <Button type="button" variant="outline" onClick={() => resetForm(selectedDeviceKey)}>
-                  Reset
+                  Cancel
                 </Button>
               </div>
             </form>
