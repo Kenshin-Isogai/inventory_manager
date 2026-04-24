@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"backend/internal/auth"
 	"backend/internal/config"
@@ -77,8 +78,8 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 }
 
 func buildOCRProvider(cfg config.Config) (ocr.Provider, error) {
-	switch cfg.OCR.Provider {
-	case "vertex_ai":
+	switch strings.TrimSpace(strings.ToLower(cfg.OCR.Provider)) {
+	case "vertex_ai", "vertex-ai":
 		return ocr.NewVertexAIProvider(cfg.OCR)
 	case "mock", "":
 		return ocr.NewMockProvider("mock"), nil
