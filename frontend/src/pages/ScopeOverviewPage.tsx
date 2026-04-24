@@ -176,3 +176,18 @@ export function ScopeOverviewPage() {
                             Reservations
                           </Button>
                           <Button size="sm" variant="outline" onClick={() => navigate(scopedPath('/app/operator/shortage', row))}>
+                            Shortage
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}

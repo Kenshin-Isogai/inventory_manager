@@ -878,4 +878,20 @@ export function OperatorImportsPage() {
               <span className="font-medium">Status:</span> {undoTarget?.status ?? '—'}
             </p>
             <p>
-              <span className="font-medium">Lifecycle:</span> {undoTarget?.lifecycleSt
+              <span className="font-medium">Lifecycle:</span> {undoTarget?.lifecycleState ?? '—'}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUndoDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => void handleConfirmUndo()} disabled={!undoTarget || undoingId === undoTarget.id} className="gap-2">
+              {undoingId ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+              Confirm Undo
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
