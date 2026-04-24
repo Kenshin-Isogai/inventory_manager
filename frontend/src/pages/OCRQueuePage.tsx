@@ -559,36 +559,7 @@ export function OCRQueuePage() {
 
             <Separator />
 
-            <div className="flex gap-2">
-              <Button
-                onClick={() => void handleSaveReview()}
-                disabled={!hasReviewOverrides || savingReview}
-              >
-                {savingReview && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {savingReview ? 'Saving...' : 'Save Review'}
-              </Button>
-              <Button
-                variant="outline"
-                onClick={handleRetry}
-                disabled={retryingJob || detail.status === 'processing'}
-              >
-                {retryingJob && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {retryingJob ? 'Retrying...' : 'Retry OCR'}
-              </Button>
-              <Button
-                onClick={handleDraftAction}
-                disabled={creatingDraft || (!detail.procurementRequestId && !canCreateDraft)}
-              >
-                {creatingDraft && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {creatingDraft ? 'Creating...' : detail.procurementRequestId ? 'Open Procurement Draft' : 'Create Procurement Draft'}
-              </Button>
-            </div>
-
-            {reviewError && <p className="text-sm text-destructive">{reviewError}</p>}
-            {draftError && <p className="text-sm text-destructive">{draftError}</p>}
-
-            <Separator />
-
+            {/* Lines summary table */}
             <div className="space-y-4">
               <h3 className="font-semibold">Lines ({currentLines.length})</h3>
               <div className="border rounded-lg overflow-hidden">
@@ -625,123 +596,155 @@ export function OCRQueuePage() {
 
             <Separator />
 
-            <div className="space-y-6">
-              <h3 className="font-semibold">Line Details</h3>
-              {currentLines.map((line) => {
-                const assist = assistByLine[line.id]
-                const registerDraft = draftByLine[line.id] ?? defaultRegisterDraft(line, currentHeader?.supplierId ?? '')
-                const categoryOptions = masterData?.categories ?? []
-                return (
-                  <Card key={`${line.id}-detail`} className="border">
-                    <CardHeader>
-                      <CardTitle className="text-base">{line.itemNumber || line.id}</CardTitle>
-                      <CardDescription>
-                        {line.matchCandidates.slice(0, 2).map((c) => `${c.canonicalItemNumber} (${Math.round(c.score * 100)}%)`).join(' • ') ||
-                          'No deterministic candidates'}
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor={`item-${line.id}`}>Resolved Item</Label>
-                          <Select
-                            value={line.itemId || UNRESOLVED_ITEM_VALUE}
-                            onValueChange={(value) => updateReviewLine(line.id, { itemId: value === UNRESOLVED_ITEM_VALUE ? '' : value })}
-                          >
-                            <SelectTrigger id={`item-${line.id}`}>
-                              <SelectValue placeholder="Unresolved" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value={UNRESOLVED_ITEM_VALUE}>Unresolved</SelectItem>
-                              {buildItemOptions(line).map((option) => (
-                                <SelectItem key={option.value || `empty-${line.id}`} value={option.value}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+            {/* ── Section: Line Review (grouped) ── */}
+            <div className="space-y-4">
+              <h3 className="font-semibold">Line Review</h3>
+              <p className="text-sm text-muted-foreground">
+                Confirm or adjust the resolved item and procurement details for each line.
+              </p>
+              <div className="rounded-lg border border-blue-200 bg-blue-50/40 dark:border-blue-900 dark:bg-blue-950/20 p-4 space-y-4">
+                {currentLines.map((line) => {
+                  const assist = assistByLine[line.id]
+                  return (
+                    <Card key={`${line.id}-review`} className="border shadow-sm">
+                      <CardHeader className="pb-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <CardTitle className="text-base">{line.itemNumber || line.id}</CardTitle>
+                            <CardDescription>
+                              {line.matchCandidates.slice(0, 2).map((c) => `${c.canonicalItemNumber} (${Math.round(c.score * 100)}%)`).join(' \u2022 ') ||
+                                'No deterministic candidates'}
+                            </CardDescription>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {assist && (
+                              <span className="text-xs text-muted-foreground">
+                                {Math.round(assist.confidence * 100)}%
+                              </span>
+                            )}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleAssist(line)}
+                              disabled={busyLineId === line.id}
+                            >
+                              {busyLineId === line.id && <Loader2 className="mr-2 h-3 w-3 animate-spin" />}
+                              {busyLineId === line.id ? 'LLM 解析中...' : 'LLM Assist'}
+                            </Button>
+                          </div>
                         </div>
-                        <div className="flex items-end">
-                          <label className="flex items-center space-x-2">
-                            <Checkbox
-                              checked={line.isUserConfirmed}
-                              onCheckedChange={(checked) =>
-                                updateReviewLine(line.id, { isUserConfirmed: checked === true })
-                              }
-                            />
-                            <span className="text-sm">User Confirmed</span>
-                          </label>
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor={`location-${line.id}`}>Delivery Location</Label>
-                          <Input
-                            id={`location-${line.id}`}
-                            value={line.deliveryLocation}
-                            onChange={(event) => updateReviewLine(line.id, { deliveryLocation: event.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor={`budget-${line.id}`}>Budget Category</Label>
-                          <Select
-                            value={line.budgetCategoryId || UNASSIGNED_BUDGET_VALUE}
-                            onValueChange={(value) =>
-                              updateReviewLine(line.id, { budgetCategoryId: value === UNASSIGNED_BUDGET_VALUE ? '' : value })
-                            }
-                          >
-                            <SelectTrigger id={`budget-${line.id}`}>
-                              <SelectValue placeholder="Unassigned" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value={UNASSIGNED_BUDGET_VALUE}>Unassigned</SelectItem>
-                              {budgetCategories?.map((category) => (
-                                <SelectItem key={category.id} value={category.id}>
-                                  {category.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor={`accounting-${line.id}`}>Accounting Category</Label>
-                          <Input
-                            id={`accounting-${line.id}`}
-                            value={line.accountingCategory}
-                            onChange={(event) => updateReviewLine(line.id, { accountingCategory: event.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor={`contact-${line.id}`}>Supplier Contact</Label>
-                          <Input
-                            id={`contact-${line.id}`}
-                            value={line.supplierContact}
-                            onChange={(event) => updateReviewLine(line.id, { supplierContact: event.target.value })}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="pt-2">
-                        <Button
-                          variant="outline"
-                          onClick={() => handleAssist(line)}
-                          disabled={busyLineId === line.id}
-                          className="w-full"
-                        >
-                          {busyLineId === line.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                          {busyLineId === line.id ? 'LLM 解析中...' : 'LLM Assist'}
-                        </Button>
                         {assist && (
-                          <p className="text-sm text-muted-foreground mt-2">
-                            {Math.round(assist.confidence * 100)}% confidence - {assist.rationale}
-                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">{assist.rationale}</p>
                         )}
-                      </div>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <div className="grid grid-cols-3 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor={`item-${line.id}`}>Resolved Item</Label>
+                            <Select
+                              value={line.itemId || UNRESOLVED_ITEM_VALUE}
+                              onValueChange={(value) => updateReviewLine(line.id, { itemId: value === UNRESOLVED_ITEM_VALUE ? '' : value })}
+                            >
+                              <SelectTrigger id={`item-${line.id}`}>
+                                <SelectValue placeholder="Unresolved" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={UNRESOLVED_ITEM_VALUE}>Unresolved</SelectItem>
+                                {buildItemOptions(line).map((option) => (
+                                  <SelectItem key={option.value || `empty-${line.id}`} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`location-${line.id}`}>Delivery Location</Label>
+                            <Input
+                              id={`location-${line.id}`}
+                              value={line.deliveryLocation}
+                              onChange={(event) => updateReviewLine(line.id, { deliveryLocation: event.target.value })}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`budget-${line.id}`}>Budget Category</Label>
+                            <Select
+                              value={line.budgetCategoryId || UNASSIGNED_BUDGET_VALUE}
+                              onValueChange={(value) =>
+                                updateReviewLine(line.id, { budgetCategoryId: value === UNASSIGNED_BUDGET_VALUE ? '' : value })
+                              }
+                            >
+                              <SelectTrigger id={`budget-${line.id}`}>
+                                <SelectValue placeholder="Unassigned" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={UNASSIGNED_BUDGET_VALUE}>Unassigned</SelectItem>
+                                {budgetCategories?.map((category) => (
+                                  <SelectItem key={category.id} value={category.id}>
+                                    {category.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`accounting-${line.id}`}>Accounting Category</Label>
+                            <Input
+                              id={`accounting-${line.id}`}
+                              value={line.accountingCategory}
+                              onChange={(event) => updateReviewLine(line.id, { accountingCategory: event.target.value })}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`contact-${line.id}`}>Supplier Contact</Label>
+                            <Input
+                              id={`contact-${line.id}`}
+                              value={line.supplierContact}
+                              onChange={(event) => updateReviewLine(line.id, { supplierContact: event.target.value })}
+                            />
+                          </div>
+                          <div className="flex items-end pb-1">
+                            <label className="flex items-center space-x-2">
+                              <Checkbox
+                                checked={line.isUserConfirmed}
+                                onCheckedChange={(checked) =>
+                                  updateReviewLine(line.id, { isUserConfirmed: checked === true })
+                                }
+                              />
+                              <span className="text-sm">User Confirmed</span>
+                            </label>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )
+                })}
+              </div>
+            </div>
 
-                      {!line.itemId && (
-                        <>
-                          <Separator />
-                          <div className="space-y-4">
-                            <h4 className="font-medium">Register as New Item</h4>
-                            <div className="grid grid-cols-2 gap-4">
+            {/* ── Section: Register New Items (grouped, only if unresolved lines exist) ── */}
+            {currentLines.some((line) => !line.itemId) && (
+              <>
+                <Separator />
+                <div className="space-y-4">
+                  <h3 className="font-semibold">
+                    Register New Items ({currentLines.filter((line) => !line.itemId).length})
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    The following lines have no matching item in the master catalog. Register them as new items to proceed.
+                  </p>
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 dark:border-emerald-900 dark:bg-emerald-950/20 p-4 space-y-4">
+                    {currentLines.filter((line) => !line.itemId).map((line) => {
+                      const registerDraft = draftByLine[line.id] ?? defaultRegisterDraft(line, currentHeader?.supplierId ?? '')
+                      const categoryOptions = masterData?.categories ?? []
+                      return (
+                        <Card key={`${line.id}-register`} className="border shadow-sm">
+                          <CardHeader className="pb-3">
+                            <CardTitle className="text-base">{line.itemNumber || line.id}</CardTitle>
+                            <CardDescription>{line.itemDescription}</CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-4 pt-0">
+                            <div className="grid grid-cols-3 gap-4">
                               <div className="space-y-2">
                                 <Label htmlFor={`canon-${line.id}`}>Canonical Item Number</Label>
                                 <Input
@@ -821,18 +824,66 @@ export function OCRQueuePage() {
                               disabled={busyLineId === line.id}
                               className="w-full"
                             >
-                              Register as New Item
+                              {busyLineId === line.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              {busyLineId === line.id ? 'Registering...' : 'Register as New Item'}
                             </Button>
-                          </div>
-                        </>
-                      )}
-                    </CardContent>
-                  </Card>
-                )
-              })}
-            </div>
+                          </CardContent>
+                        </Card>
+                      )
+                    })}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {reviewError && <p className="text-sm text-destructive">{reviewError}</p>}
+            {draftError && <p className="text-sm text-destructive">{draftError}</p>}
           </CardContent>
         </Card>
+      )}
+
+      {/* ── Sticky Action Bar (visible when OCR detail is loaded) ── */}
+      {detail && (
+        <div className="sticky bottom-0 z-10 -mx-6 px-6 py-3 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 border-t shadow-[0_-2px_10px_rgba(0,0,0,0.06)]">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+              {unresolvedLineCount > 0 && (
+                <span className="text-orange-600 font-medium">{unresolvedLineCount} unresolved</span>
+              )}
+              {unconfirmedLineCount > 0 && (
+                <span className="text-blue-600 font-medium">{unconfirmedLineCount} unconfirmed</span>
+              )}
+              {unresolvedLineCount === 0 && unconfirmedLineCount === 0 && (
+                <span className="text-green-600 font-medium">All lines resolved & confirmed</span>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={handleRetry}
+                disabled={retryingJob || detail.status === 'processing'}
+              >
+                {retryingJob && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {retryingJob ? 'Retrying...' : 'Retry OCR'}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => void handleSaveReview()}
+                disabled={!hasReviewOverrides || savingReview}
+              >
+                {savingReview && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {savingReview ? 'Saving...' : 'Save Review'}
+              </Button>
+              <Button
+                onClick={handleDraftAction}
+                disabled={creatingDraft || (!detail.procurementRequestId && !canCreateDraft)}
+              >
+                {creatingDraft && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {creatingDraft ? 'Creating...' : detail.procurementRequestId ? 'Open Procurement Draft' : 'Create Procurement Draft'}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
