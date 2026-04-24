@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -147,6 +148,124 @@ func (h Handlers) RequirementsImportApply(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, APIEnvelope[inventory.RequirementsImportResult]{Data: data})
+}
+
+func readCSVUpload(r *http.Request) (string, []byte, error) {
+	if err := r.ParseMultipartForm(16 << 20); err != nil {
+		return "", nil, fmt.Errorf("failed to parse multipart form")
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		return "", nil, fmt.Errorf("file field is required")
+	}
+	defer file.Close()
+	body, err := io.ReadAll(file)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to read uploaded file")
+	}
+	return header.Filename, body, nil
+}
+
+func (h Handlers) ReservationImportPreview(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "operator") {
+		return
+	}
+	fileName, body, err := readCSVUpload(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	data, err := h.phaseOne.ReservationImportPreview(r.Context(), fileName, body)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, APIEnvelope[inventory.ImportPreviewResult]{Data: data})
+}
+
+func (h Handlers) ReservationImportApply(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "operator") {
+		return
+	}
+	fileName, body, err := readCSVUpload(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	data, err := h.phaseOne.ReservationImportApply(r.Context(), fileName, body, r.FormValue("actorId"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, APIEnvelope[inventory.CSVImportApplyResult]{Data: data})
+}
+
+func (h Handlers) AllocationImportPreview(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "operator", "inventory") {
+		return
+	}
+	fileName, body, err := readCSVUpload(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	data, err := h.phaseOne.AllocationImportPreview(r.Context(), fileName, body)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, APIEnvelope[inventory.ImportPreviewResult]{Data: data})
+}
+
+func (h Handlers) AllocationImportApply(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "operator", "inventory") {
+		return
+	}
+	fileName, body, err := readCSVUpload(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	data, err := h.phaseOne.AllocationImportApply(r.Context(), fileName, body, r.FormValue("actorId"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, APIEnvelope[inventory.CSVImportApplyResult]{Data: data})
+}
+
+func (h Handlers) InventoryOperationImportPreview(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "inventory") {
+		return
+	}
+	fileName, body, err := readCSVUpload(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	data, err := h.phaseOne.InventoryOperationImportPreview(r.Context(), r.PathValue("operation"), fileName, body)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, APIEnvelope[inventory.ImportPreviewResult]{Data: data})
+}
+
+func (h Handlers) InventoryOperationImportApply(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "inventory") {
+		return
+	}
+	fileName, body, err := readCSVUpload(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	data, err := h.phaseOne.InventoryOperationImportApply(r.Context(), r.PathValue("operation"), fileName, body, r.FormValue("actorId"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, APIEnvelope[inventory.CSVImportApplyResult]{Data: data})
 }
 
 // BulkReservationPreview generates a preview of bulk reservations.

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -646,6 +647,455 @@ func (r *Repository) RequirementsImportApply(ctx context.Context, fileName strin
 		return RequirementsImportResult{}, fmt.Errorf("commit: %w", err)
 	}
 	return result, nil
+}
+
+type batchCSVRow struct {
+	RowNumber int
+	Raw       map[string]string
+}
+
+func parseBatchCSV(data []byte) ([]batchCSVRow, error) {
+	reader := csv.NewReader(bytes.NewReader(data))
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("parse CSV: %w", err)
+	}
+	if len(records) < 2 {
+		return nil, fmt.Errorf("CSV must have a header row and at least one data row")
+	}
+	headers := normalizeCSVHeaders(records[0])
+	rows := make([]batchCSVRow, 0, len(records)-1)
+	for index, record := range records[1:] {
+		rows = append(rows, batchCSVRow{
+			RowNumber: index + 2,
+			Raw:       csvRecord(headers, record),
+		})
+	}
+	return rows, nil
+}
+
+func rowValue(row map[string]string, names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(row[name]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func positiveRowInt(row map[string]string, names ...string) (int, bool) {
+	raw := rowValue(row, names...)
+	value, err := strconv.Atoi(raw)
+	return value, err == nil && value > 0
+}
+
+func anyRowInt(row map[string]string, names ...string) (int, bool) {
+	raw := rowValue(row, names...)
+	value, err := strconv.Atoi(raw)
+	return value, err == nil
+}
+
+func (r *Repository) resolveBatchScopeID(ctx context.Context, raw map[string]string) string {
+	if id := rowValue(raw, "device_scope_id", "scope_id"); id != "" {
+		return id
+	}
+	device := rowValue(raw, "device", "device_key")
+	scope := rowValue(raw, "scope", "scope_key")
+	if device == "" || scope == "" {
+		return ""
+	}
+	var id string
+	_ = r.db.QueryRowContext(ctx, `
+		SELECT ds.id
+		FROM device_scopes ds
+		LEFT JOIN devices d ON d.id = ds.device_id
+		WHERE COALESCE(d.device_key, ds.device_key) = $1 AND ds.scope_key = $2
+	`, device, scope).Scan(&id)
+	return id
+}
+
+func (r *Repository) resolveBatchItemID(ctx context.Context, raw map[string]string) string {
+	if id := rowValue(raw, "item_id"); id != "" {
+		return id
+	}
+	itemNumber := rowValue(raw, "item_number", "canonical_item_number")
+	if itemNumber == "" {
+		return ""
+	}
+	var id string
+	_ = r.db.QueryRowContext(ctx, `SELECT id FROM items WHERE canonical_item_number = $1`, itemNumber).Scan(&id)
+	return id
+}
+
+func batchPreviewResult(importType, fileName string, rows []ImportPreviewRow) ImportPreviewResult {
+	status := "ready"
+	for _, row := range rows {
+		if row.Status == "invalid" {
+			status = "has_errors"
+			break
+		}
+	}
+	return ImportPreviewResult{ImportType: importType, FileName: fileName, Status: status, Rows: rows}
+}
+
+func rawPayload(raw map[string]string) string {
+	payload, _ := json.Marshal(raw)
+	return string(payload)
+}
+
+func (r *Repository) createCSVImportJobTx(ctx context.Context, tx *sql.Tx, importType, fileName, actor string, preview ImportPreviewResult, summary map[string]int) (string, map[int]string, error) {
+	jobID := fmt.Sprintf("imp-%d", time.Now().UnixNano())
+	summaryBytes, _ := json.Marshal(summary)
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO import_jobs (id, import_type, status, lifecycle_state, file_name, summary, created_by, created_at, updated_at)
+		VALUES ($1, $2, 'completed', 'applied', $3, $4::jsonb, $5, NOW(), NOW())
+	`, jobID, importType, fileName, string(summaryBytes), defaultString(actor, "local-user")); err != nil {
+		return "", nil, fmt.Errorf("insert import job: %w", err)
+	}
+	rowIDs := map[int]string{}
+	for _, row := range preview.Rows {
+		rowID := fmt.Sprintf("import-row-%d", time.Now().UnixNano())
+		rowIDs[row.RowNumber] = rowID
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO import_rows (id, import_job_id, row_number, raw_payload, normalized_payload, status, code, message, created_at)
+			VALUES ($1, $2, $3, $4::jsonb, $4::jsonb, $5, $6, $7, NOW())
+		`, rowID, jobID, row.RowNumber, rawPayload(row.Raw), row.Status, row.Code, row.Message); err != nil {
+			return "", nil, fmt.Errorf("insert import row: %w", err)
+		}
+	}
+	return jobID, rowIDs, nil
+}
+
+func insertCSVImportEffectTx(ctx context.Context, tx *sql.Tx, jobID, rowID, entityType, entityID, effectType string, beforeState, afterState any) error {
+	beforeBytes, _ := json.Marshal(beforeState)
+	afterBytes, _ := json.Marshal(afterState)
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO import_effects (id, import_job_id, import_row_id, target_entity_type, target_entity_id, effect_type, before_state, after_state, created_at)
+		VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7::jsonb, $8::jsonb, NOW())
+	`, fmt.Sprintf("import-effect-%d", time.Now().UnixNano()), jobID, rowID, entityType, entityID, effectType, string(beforeBytes), string(afterBytes)); err != nil {
+		return fmt.Errorf("insert import effect: %w", err)
+	}
+	return nil
+}
+
+func importSummaryPayload(summary map[string]int) map[string]any {
+	payload := map[string]any{}
+	for key, value := range summary {
+		payload[key] = value
+	}
+	return payload
+}
+
+func (r *Repository) ReservationImportPreview(ctx context.Context, fileName string, data []byte) (ImportPreviewResult, error) {
+	rows, err := parseBatchCSV(data)
+	if err != nil {
+		return ImportPreviewResult{}, err
+	}
+	previewRows := make([]ImportPreviewRow, 0, len(rows))
+	for _, parsed := range rows {
+		row := ImportPreviewRow{RowNumber: parsed.RowNumber, Status: "valid", Code: "reservation_create", Raw: parsed.Raw}
+		itemID := r.resolveBatchItemID(ctx, parsed.Raw)
+		scopeID := r.resolveBatchScopeID(ctx, parsed.Raw)
+		qty, qtyOK := positiveRowInt(parsed.Raw, "quantity")
+		switch {
+		case itemID == "":
+			row.Status, row.Code, row.Message = "invalid", "item_not_found", "item_id or item_number must resolve to an item"
+		case scopeID == "":
+			row.Status, row.Code, row.Message = "invalid", "scope_not_found", "device_scope_id or device/scope must resolve to a scope"
+		case !qtyOK:
+			row.Status, row.Code, row.Message = "invalid", "invalid_quantity", "quantity must be a positive integer"
+		default:
+			row.Raw["item_id"] = itemID
+			row.Raw["device_scope_id"] = scopeID
+			row.Raw["quantity"] = strconv.Itoa(qty)
+		}
+		previewRows = append(previewRows, row)
+	}
+	return batchPreviewResult("reservations", fileName, previewRows), nil
+}
+
+func (r *Repository) ReservationImportApply(ctx context.Context, fileName string, data []byte, actor string) (CSVImportApplyResult, error) {
+	preview, err := r.ReservationImportPreview(ctx, fileName, data)
+	if err != nil {
+		return CSVImportApplyResult{}, err
+	}
+	if preview.Status == "has_errors" {
+		return CSVImportApplyResult{}, fmt.Errorf("CSV contains invalid reservation rows")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return CSVImportApplyResult{}, fmt.Errorf("begin reservation import tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	summary := map[string]int{"created": 0, "updated": 0, "skipped": 0, "errored": 0}
+	jobID, rowIDs, err := r.createCSVImportJobTx(ctx, tx, "reservations", fileName, actor, preview, summary)
+	if err != nil {
+		return CSVImportApplyResult{}, err
+	}
+	for _, row := range preview.Rows {
+		qty, _ := positiveRowInt(row.Raw, "quantity")
+		reservationID := fmt.Sprintf("res-%d", time.Now().UnixNano())
+		requestedBy := defaultString(rowValue(row.Raw, "requested_by"), actor)
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO reservations (
+				id, item_id, device_scope_id, quantity, status, requested_by, note, purpose, priority,
+				needed_by_at, planned_use_at, hold_until_at, created_at, updated_at
+			)
+			VALUES ($1, $2, $3, $4, 'requested', $5, $6, $7, $8, NULLIF($9, '')::timestamptz, NULLIF($10, '')::timestamptz, NULLIF($11, '')::timestamptz, NOW(), NOW())
+		`, reservationID, row.Raw["item_id"], row.Raw["device_scope_id"], qty, requestedBy, rowValue(row.Raw, "note"), rowValue(row.Raw, "purpose"), defaultString(rowValue(row.Raw, "priority"), "normal"), rowValue(row.Raw, "needed_by_at"), rowValue(row.Raw, "planned_use_at"), rowValue(row.Raw, "hold_until_at")); err != nil {
+			return CSVImportApplyResult{}, fmt.Errorf("insert reservation row %d: %w", row.RowNumber, err)
+		}
+		if err := r.recordReservationEventTx(ctx, tx, reservationID, "requested", qty, requestedBy, map[string]any{"note": rowValue(row.Raw, "note")}); err != nil {
+			return CSVImportApplyResult{}, err
+		}
+		if err := insertCSVImportEffectTx(ctx, tx, jobID, rowIDs[row.RowNumber], "reservation", reservationID, "insert", map[string]any{}, row.Raw); err != nil {
+			return CSVImportApplyResult{}, err
+		}
+		summary["created"]++
+	}
+	summaryBytes, _ := json.Marshal(summary)
+	if _, err := tx.ExecContext(ctx, `UPDATE import_jobs SET summary = $2::jsonb WHERE id = $1`, jobID, string(summaryBytes)); err != nil {
+		return CSVImportApplyResult{}, fmt.Errorf("update import summary: %w", err)
+	}
+	if err := recordAuditEventTx(ctx, tx, actor, "reservations.imported", "import_job", jobID, importSummaryPayload(summary)); err != nil {
+		return CSVImportApplyResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return CSVImportApplyResult{}, fmt.Errorf("commit reservation import tx: %w", err)
+	}
+	detail, err := r.ImportDetail(ctx, jobID)
+	if err != nil {
+		return CSVImportApplyResult{}, err
+	}
+	return CSVImportApplyResult{JobID: jobID, Created: summary["created"], Detail: detail}, nil
+}
+
+func (r *Repository) AllocationImportPreview(ctx context.Context, fileName string, data []byte) (ImportPreviewResult, error) {
+	rows, err := parseBatchCSV(data)
+	if err != nil {
+		return ImportPreviewResult{}, err
+	}
+	previewRows := make([]ImportPreviewRow, 0, len(rows))
+	for _, parsed := range rows {
+		row := ImportPreviewRow{RowNumber: parsed.RowNumber, Status: "valid", Code: "reservation_allocate", Raw: parsed.Raw}
+		reservationID := rowValue(parsed.Raw, "reservation_id")
+		location := rowValue(parsed.Raw, "location_code")
+		qty, qtyOK := positiveRowInt(parsed.Raw, "quantity")
+		var itemID string
+		var available int
+		if reservationID != "" && location != "" {
+			_ = r.db.QueryRowContext(ctx, `
+				SELECT r.item_id, COALESCE(ib.available_quantity, 0)
+				FROM reservations r
+				LEFT JOIN inventory_balances ib ON ib.item_id = r.item_id AND ib.location_code = $2
+				WHERE r.id = $1
+			`, reservationID, location).Scan(&itemID, &available)
+		}
+		switch {
+		case reservationID == "":
+			row.Status, row.Code, row.Message = "invalid", "missing_reservation_id", "reservation_id is required"
+		case itemID == "":
+			row.Status, row.Code, row.Message = "invalid", "reservation_not_found", "reservation_id was not found"
+		case location == "":
+			row.Status, row.Code, row.Message = "invalid", "missing_location", "location_code is required"
+		case !qtyOK:
+			row.Status, row.Code, row.Message = "invalid", "invalid_quantity", "quantity must be a positive integer"
+		case available < qty:
+			row.Status, row.Code, row.Message = "invalid", "insufficient_available_quantity", fmt.Sprintf("available quantity at %s is %d", location, available)
+		}
+		previewRows = append(previewRows, row)
+	}
+	return batchPreviewResult("reservation_allocations", fileName, previewRows), nil
+}
+
+func (r *Repository) AllocationImportApply(ctx context.Context, fileName string, data []byte, actor string) (CSVImportApplyResult, error) {
+	preview, err := r.AllocationImportPreview(ctx, fileName, data)
+	if err != nil {
+		return CSVImportApplyResult{}, err
+	}
+	if preview.Status == "has_errors" {
+		return CSVImportApplyResult{}, fmt.Errorf("CSV contains invalid allocation rows")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return CSVImportApplyResult{}, fmt.Errorf("begin allocation import tx: %w", err)
+	}
+	defer tx.Rollback()
+	summary := map[string]int{"created": 0, "updated": 0, "skipped": 0, "errored": 0}
+	jobID, rowIDs, err := r.createCSVImportJobTx(ctx, tx, "reservation_allocations", fileName, actor, preview, summary)
+	if err != nil {
+		return CSVImportApplyResult{}, err
+	}
+	for _, row := range preview.Rows {
+		qty, _ := positiveRowInt(row.Raw, "quantity")
+		detail, err := r.reservationDetailTx(ctx, tx, rowValue(row.Raw, "reservation_id"))
+		if err != nil {
+			return CSVImportApplyResult{}, err
+		}
+		allocationID := fmt.Sprintf("alloc-%d", time.Now().UnixNano())
+		location := rowValue(row.Raw, "location_code")
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO reservation_allocations (id, reservation_id, item_id, location_code, quantity, status, allocated_at, note)
+			VALUES ($1, $2, $3, $4, $5, 'allocated', NOW(), $6)
+		`, allocationID, detail.ID, detail.ItemID, location, qty, rowValue(row.Raw, "note")); err != nil {
+			return CSVImportApplyResult{}, fmt.Errorf("insert allocation row %d: %w", row.RowNumber, err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO inventory_events (
+				id, item_id, location_code, from_location_code, to_location_code, event_type, quantity_delta, note, device_scope_id,
+				actor_id, source_type, source_id, correlation_id, occurred_at
+			) VALUES ($1, $2, $3, $4, '', 'reserve_allocate', 0, $5, $6, $7, 'reservation', $8, $9, NOW())
+		`, fmt.Sprintf("evt-%d", time.Now().UnixNano()), detail.ItemID, location, location, rowValue(row.Raw, "note"), detail.DeviceScopeID, defaultString(rowValue(row.Raw, "actor_id"), actor), detail.ID, allocationID); err != nil {
+			return CSVImportApplyResult{}, fmt.Errorf("insert allocation inventory event row %d: %w", row.RowNumber, err)
+		}
+		if err := adjustReservedQuantityTx(ctx, tx, detail.ItemID, location, qty); err != nil {
+			return CSVImportApplyResult{}, err
+		}
+		if err := r.recordReservationEventTx(ctx, tx, detail.ID, "allocated", qty, actor, map[string]any{"locationCode": location, "allocationId": allocationID, "note": rowValue(row.Raw, "note")}); err != nil {
+			return CSVImportApplyResult{}, err
+		}
+		if err := r.refreshReservationStatusTx(ctx, tx, detail.ID); err != nil {
+			return CSVImportApplyResult{}, err
+		}
+		if err := insertCSVImportEffectTx(ctx, tx, jobID, rowIDs[row.RowNumber], "reservation_allocation", allocationID, "insert", map[string]any{}, row.Raw); err != nil {
+			return CSVImportApplyResult{}, err
+		}
+		summary["created"]++
+	}
+	summaryBytes, _ := json.Marshal(summary)
+	if _, err := tx.ExecContext(ctx, `UPDATE import_jobs SET summary = $2::jsonb WHERE id = $1`, jobID, string(summaryBytes)); err != nil {
+		return CSVImportApplyResult{}, fmt.Errorf("update import summary: %w", err)
+	}
+	if err := recordAuditEventTx(ctx, tx, actor, "reservation_allocations.imported", "import_job", jobID, importSummaryPayload(summary)); err != nil {
+		return CSVImportApplyResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return CSVImportApplyResult{}, fmt.Errorf("commit allocation import tx: %w", err)
+	}
+	detail, err := r.ImportDetail(ctx, jobID)
+	if err != nil {
+		return CSVImportApplyResult{}, err
+	}
+	return CSVImportApplyResult{JobID: jobID, Created: summary["created"], Detail: detail}, nil
+}
+
+func (r *Repository) InventoryOperationImportPreview(ctx context.Context, operation, fileName string, data []byte) (ImportPreviewResult, error) {
+	rows, err := parseBatchCSV(data)
+	if err != nil {
+		return ImportPreviewResult{}, err
+	}
+	previewRows := make([]ImportPreviewRow, 0, len(rows))
+	for _, parsed := range rows {
+		row := ImportPreviewRow{RowNumber: parsed.RowNumber, Status: "valid", Code: "inventory_" + operation, Raw: parsed.Raw}
+		itemID := r.resolveBatchItemID(ctx, parsed.Raw)
+		scopeID := r.resolveBatchScopeID(ctx, parsed.Raw)
+		if itemID == "" {
+			row.Status, row.Code, row.Message = "invalid", "item_not_found", "item_id or item_number must resolve to an item"
+		} else if scopeID == "" {
+			row.Status, row.Code, row.Message = "invalid", "scope_not_found", "device_scope_id or device/scope must resolve to a scope"
+		} else {
+			row.Raw["item_id"] = itemID
+			row.Raw["device_scope_id"] = scopeID
+			switch operation {
+			case "adjust":
+				if _, ok := anyRowInt(parsed.Raw, "quantity_delta"); !ok {
+					row.Status, row.Code, row.Message = "invalid", "invalid_quantity_delta", "quantity_delta must be an integer"
+				} else if rowValue(parsed.Raw, "location_code") == "" {
+					row.Status, row.Code, row.Message = "invalid", "missing_location", "location_code is required"
+				}
+			case "receive":
+				if _, ok := positiveRowInt(parsed.Raw, "quantity"); !ok {
+					row.Status, row.Code, row.Message = "invalid", "invalid_quantity", "quantity must be a positive integer"
+				} else if rowValue(parsed.Raw, "location_code") == "" {
+					row.Status, row.Code, row.Message = "invalid", "missing_location", "location_code is required"
+				}
+			case "move":
+				if _, ok := positiveRowInt(parsed.Raw, "quantity"); !ok {
+					row.Status, row.Code, row.Message = "invalid", "invalid_quantity", "quantity must be a positive integer"
+				} else if rowValue(parsed.Raw, "from_location_code") == "" || rowValue(parsed.Raw, "to_location_code") == "" {
+					row.Status, row.Code, row.Message = "invalid", "missing_location", "from_location_code and to_location_code are required"
+				}
+			default:
+				return ImportPreviewResult{}, fmt.Errorf("unsupported inventory operation: %s", operation)
+			}
+		}
+		previewRows = append(previewRows, row)
+	}
+	return batchPreviewResult("inventory_"+operation, fileName, previewRows), nil
+}
+
+func (r *Repository) InventoryOperationImportApply(ctx context.Context, operation, fileName string, data []byte, actor string) (CSVImportApplyResult, error) {
+	preview, err := r.InventoryOperationImportPreview(ctx, operation, fileName, data)
+	if err != nil {
+		return CSVImportApplyResult{}, err
+	}
+	if preview.Status == "has_errors" {
+		return CSVImportApplyResult{}, fmt.Errorf("CSV contains invalid inventory operation rows")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return CSVImportApplyResult{}, fmt.Errorf("begin inventory operation import tx: %w", err)
+	}
+	defer tx.Rollback()
+	summary := map[string]int{"created": 0, "updated": 0, "skipped": 0, "errored": 0}
+	jobID, rowIDs, err := r.createCSVImportJobTx(ctx, tx, "inventory_"+operation, fileName, actor, preview, summary)
+	if err != nil {
+		return CSVImportApplyResult{}, err
+	}
+	for _, row := range preview.Rows {
+		var event InventoryEventEntry
+		switch operation {
+		case "adjust":
+			delta, _ := anyRowInt(row.Raw, "quantity_delta")
+			if delta > 0 {
+				if err := incrementBalanceTx(ctx, tx, row.Raw["item_id"], rowValue(row.Raw, "location_code"), delta); err != nil {
+					return CSVImportApplyResult{}, err
+				}
+			} else {
+				if err := decrementBalanceTx(ctx, tx, row.Raw["item_id"], rowValue(row.Raw, "location_code"), -delta); err != nil {
+					return CSVImportApplyResult{}, err
+				}
+			}
+			event, err = insertInventoryEventTx(ctx, tx, inventoryEventInsert{ItemID: row.Raw["item_id"], LocationCode: rowValue(row.Raw, "location_code"), FromLocationCode: rowValue(row.Raw, "location_code"), ToLocationCode: rowValue(row.Raw, "location_code"), EventType: "adjust", QuantityDelta: delta, DeviceScopeID: row.Raw["device_scope_id"], ActorID: actor, SourceType: "manual", SourceID: rowValue(row.Raw, "source_id"), Note: rowValue(row.Raw, "note")})
+		case "receive":
+			qty, _ := positiveRowInt(row.Raw, "quantity")
+			event, err = insertInventoryEventTx(ctx, tx, inventoryEventInsert{ItemID: row.Raw["item_id"], LocationCode: rowValue(row.Raw, "location_code"), ToLocationCode: rowValue(row.Raw, "location_code"), EventType: "receive", QuantityDelta: qty, DeviceScopeID: row.Raw["device_scope_id"], ActorID: actor, SourceType: defaultString(rowValue(row.Raw, "source_type"), "manual"), SourceID: rowValue(row.Raw, "source_id"), Note: rowValue(row.Raw, "note")})
+			if err == nil {
+				err = incrementBalanceTx(ctx, tx, row.Raw["item_id"], rowValue(row.Raw, "location_code"), qty)
+			}
+		case "move":
+			qty, _ := positiveRowInt(row.Raw, "quantity")
+			if err = decrementBalanceTx(ctx, tx, row.Raw["item_id"], rowValue(row.Raw, "from_location_code"), qty); err == nil {
+				err = incrementBalanceTx(ctx, tx, row.Raw["item_id"], rowValue(row.Raw, "to_location_code"), qty)
+			}
+			if err == nil {
+				event, err = insertInventoryEventTx(ctx, tx, inventoryEventInsert{ItemID: row.Raw["item_id"], LocationCode: rowValue(row.Raw, "to_location_code"), FromLocationCode: rowValue(row.Raw, "from_location_code"), ToLocationCode: rowValue(row.Raw, "to_location_code"), EventType: "move", QuantityDelta: qty, DeviceScopeID: row.Raw["device_scope_id"], ActorID: actor, SourceType: defaultString(rowValue(row.Raw, "source_type"), "manual"), SourceID: rowValue(row.Raw, "source_id"), CorrelationSource: fmt.Sprintf("%s->%s", rowValue(row.Raw, "from_location_code"), rowValue(row.Raw, "to_location_code")), Note: rowValue(row.Raw, "note")})
+			}
+		}
+		if err != nil {
+			return CSVImportApplyResult{}, fmt.Errorf("apply inventory %s row %d: %w", operation, row.RowNumber, err)
+		}
+		if err := insertCSVImportEffectTx(ctx, tx, jobID, rowIDs[row.RowNumber], "inventory_event", event.ID, "insert", map[string]any{}, row.Raw); err != nil {
+			return CSVImportApplyResult{}, err
+		}
+		summary["created"]++
+	}
+	summaryBytes, _ := json.Marshal(summary)
+	if _, err := tx.ExecContext(ctx, `UPDATE import_jobs SET summary = $2::jsonb WHERE id = $1`, jobID, string(summaryBytes)); err != nil {
+		return CSVImportApplyResult{}, fmt.Errorf("update import summary: %w", err)
+	}
+	if err := recordAuditEventTx(ctx, tx, actor, "inventory_operations.imported", "import_job", jobID, importSummaryPayload(summary)); err != nil {
+		return CSVImportApplyResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return CSVImportApplyResult{}, fmt.Errorf("commit inventory operation import tx: %w", err)
+	}
+	detail, err := r.ImportDetail(ctx, jobID)
+	if err != nil {
+		return CSVImportApplyResult{}, err
+	}
+	return CSVImportApplyResult{JobID: jobID, Created: summary["created"], Detail: detail}, nil
 }
 
 // BulkReservationPreview generates allocation plan from requirements.

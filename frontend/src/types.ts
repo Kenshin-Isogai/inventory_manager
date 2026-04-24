@@ -83,16 +83,126 @@ export type DashboardResponse = {
 
 export type ReservationSummary = {
   id: string
+  itemId?: string
   itemNumber: string
   description: string
   quantity: number
   device: string
   scope: string
-  status: 'reserved' | 'partially_allocated' | 'awaiting_stock'
+  status: string
 }
 
 export type ReservationListResponse = {
   rows: ReservationSummary[]
+}
+
+export type RequirementSummary = {
+  id: string
+  device: string
+  scope: string
+  itemId: string
+  itemNumber: string
+  description: string
+  quantity: number
+  note: string
+}
+
+export type RequirementListResponse = {
+  rows: RequirementSummary[]
+}
+
+export type RequirementUpsertInput = {
+  id?: string
+  deviceScopeId: string
+  itemId: string
+  quantity: number
+  note: string
+}
+
+export type ReservationCreateInput = {
+  itemId: string
+  deviceScopeId: string
+  quantity: number
+  requestedBy: string
+  purpose: string
+  priority: string
+  neededByAt: string
+  plannedUseAt: string
+  holdUntilAt: string
+  note: string
+}
+
+export type ReservationAllocation = {
+  id: string
+  locationCode: string
+  quantity: number
+  status: string
+  allocatedAt: string
+  releasedAt: string
+  note: string
+}
+
+export type ReservationDetail = {
+  id: string
+  itemId: string
+  itemNumber: string
+  description: string
+  deviceScopeId: string
+  device: string
+  scope: string
+  quantity: number
+  allocatedQuantity: number
+  status: string
+  purpose: string
+  priority: string
+  neededByAt: string
+  plannedUseAt: string
+  holdUntilAt: string
+  fulfilledAt: string
+  releasedAt: string
+  cancellationReason: string
+  requestedBy: string
+  note: string
+  allocations: ReservationAllocation[]
+}
+
+export type ReservationActionInput = {
+  locationCode?: string
+  quantity: number
+  reason: string
+  actorId: string
+  note: string
+}
+
+export type InventoryReceiveInput = {
+  itemId: string
+  locationCode: string
+  quantity: number
+  deviceScopeId: string
+  actorId: string
+  sourceType: string
+  sourceId: string
+  note: string
+}
+
+export type InventoryMoveInput = {
+  itemId: string
+  fromLocationCode: string
+  toLocationCode: string
+  quantity: number
+  deviceScopeId: string
+  actorId: string
+  sourceType: string
+  sourceId: string
+  note: string
+}
+
+export type InventoryAdjustInput = {
+  itemId: string
+  locationCode: string
+  quantityDelta: number
+  deviceScopeId: string
+  note: string
 }
 
 export type DeviceScopeRecord = {
@@ -187,9 +297,11 @@ export type ShortageListResponse = {
   rows: ShortageRow[]
 }
 
+export type ImportType = 'items' | 'aliases'
+
 export type ImportJob = {
   id: string
-  importType: string
+  importType: ImportType
   status: string
   fileName: string
   summary: string
@@ -198,6 +310,50 @@ export type ImportJob = {
 
 export type ImportHistoryResponse = {
   rows: ImportJob[]
+}
+
+export type ImportPreviewRow = {
+  rowNumber: number
+  status: string
+  code: string
+  message: string
+  raw: Record<string, string>
+}
+
+export type ImportPreviewResult = {
+  importType: ImportType
+  fileName: string
+  status: string
+  rows: ImportPreviewRow[]
+}
+
+export type ImportEffectSummary = {
+  id: string
+  targetEntityType: string
+  targetEntityId: string
+  effectType: string
+}
+
+export type ImportDetailResponse = {
+  id: string
+  importType: ImportType
+  status: string
+  lifecycleState: string
+  fileName: string
+  summary: string
+  createdAt: string
+  undoneAt: string
+  rows: ImportPreviewRow[]
+  effects: ImportEffectSummary[]
+}
+
+export type CSVImportApplyResult = {
+  jobId: string
+  created: number
+  updated: number
+  skipped: number
+  errored: number
+  detail: ImportDetailResponse
 }
 
 export type MasterItem = {

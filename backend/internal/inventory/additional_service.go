@@ -57,6 +57,48 @@ func (s *Service) RequirementsImportApply(ctx context.Context, fileName string, 
 	return s.repo.RequirementsImportApply(ctx, fileName, data)
 }
 
+func (s *Service) ReservationImportPreview(ctx context.Context, fileName string, data []byte) (ImportPreviewResult, error) {
+	if fileName == "" {
+		return ImportPreviewResult{}, fmt.Errorf("fileName is required")
+	}
+	return s.repo.ReservationImportPreview(ctx, fileName, data)
+}
+
+func (s *Service) ReservationImportApply(ctx context.Context, fileName string, data []byte, actor string) (CSVImportApplyResult, error) {
+	if fileName == "" {
+		return CSVImportApplyResult{}, fmt.Errorf("fileName is required")
+	}
+	return s.repo.ReservationImportApply(ctx, fileName, data, actor)
+}
+
+func (s *Service) AllocationImportPreview(ctx context.Context, fileName string, data []byte) (ImportPreviewResult, error) {
+	if fileName == "" {
+		return ImportPreviewResult{}, fmt.Errorf("fileName is required")
+	}
+	return s.repo.AllocationImportPreview(ctx, fileName, data)
+}
+
+func (s *Service) AllocationImportApply(ctx context.Context, fileName string, data []byte, actor string) (CSVImportApplyResult, error) {
+	if fileName == "" {
+		return CSVImportApplyResult{}, fmt.Errorf("fileName is required")
+	}
+	return s.repo.AllocationImportApply(ctx, fileName, data, actor)
+}
+
+func (s *Service) InventoryOperationImportPreview(ctx context.Context, operation, fileName string, data []byte) (ImportPreviewResult, error) {
+	if operation == "" || fileName == "" {
+		return ImportPreviewResult{}, fmt.Errorf("operation and fileName are required")
+	}
+	return s.repo.InventoryOperationImportPreview(ctx, operation, fileName, data)
+}
+
+func (s *Service) InventoryOperationImportApply(ctx context.Context, operation, fileName string, data []byte, actor string) (CSVImportApplyResult, error) {
+	if operation == "" || fileName == "" {
+		return CSVImportApplyResult{}, fmt.Errorf("operation and fileName are required")
+	}
+	return s.repo.InventoryOperationImportApply(ctx, operation, fileName, data, actor)
+}
+
 // BulkReservationPreview generates a preview of bulk reservations from requirements.
 func (s *Service) BulkReservationPreview(ctx context.Context, scopeID string) (BulkReservationPreview, error) {
 	if scopeID == "" {

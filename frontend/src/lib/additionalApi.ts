@@ -9,6 +9,8 @@ import type {
   BulkReservationPreviewResponse,
   BulkReservationConfirmInput,
   BulkReservationResult,
+  CSVImportApplyResult,
+  ImportPreviewResult,
   RequirementsImportPreviewResponse,
   RequirementsImportResult,
 } from '../types'
@@ -166,4 +168,61 @@ export async function applyRequirementsImport(file: File): Promise<RequirementsI
   if (!response.ok) throw new Error(`import failed: ${response.status}`)
   const payload = await response.json()
   return payload.data as RequirementsImportResult
+}
+
+async function postCSVPreview(path: string, file: File): Promise<ImportPreviewResult> {
+  const form = new FormData()
+  form.append('file', file)
+  const response = await fetch(`${config.apiBaseUrl}${path}`, {
+    method: 'POST',
+    headers: authorizationHeaders(),
+    body: form,
+  })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    throw new Error((payload as { error?: string } | null)?.error ?? `preview failed: ${response.status}`)
+  }
+  const payload = await response.json()
+  return payload.data as ImportPreviewResult
+}
+
+async function postCSVApply(path: string, file: File, actorId: string): Promise<CSVImportApplyResult> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('actorId', actorId)
+  const response = await fetch(`${config.apiBaseUrl}${path}`, {
+    method: 'POST',
+    headers: authorizationHeaders(),
+    body: form,
+  })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    throw new Error((payload as { error?: string } | null)?.error ?? `import failed: ${response.status}`)
+  }
+  const payload = await response.json()
+  return payload.data as CSVImportApplyResult
+}
+
+export function previewReservationsImport(file: File) {
+  return postCSVPreview('/api/v1/operator/reservations/import/preview', file)
+}
+
+export function applyReservationsImport(file: File, actorId: string) {
+  return postCSVApply('/api/v1/operator/reservations/import', file, actorId)
+}
+
+export function previewAllocationsImport(file: File) {
+  return postCSVPreview('/api/v1/operator/reservations/allocations/import/preview', file)
+}
+
+export function applyAllocationsImport(file: File, actorId: string) {
+  return postCSVApply('/api/v1/operator/reservations/allocations/import', file, actorId)
+}
+
+export function previewInventoryOperationImport(operation: 'adjust' | 'receive' | 'move', file: File) {
+  return postCSVPreview(`/api/v1/inventory/operations/${operation}/import/preview`, file)
+}
+
+export function applyInventoryOperationImport(operation: 'adjust' | 'receive' | 'move', file: File, actorId: string) {
+  return postCSVApply(`/api/v1/inventory/operations/${operation}/import`, file, actorId)
 }

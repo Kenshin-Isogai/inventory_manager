@@ -230,6 +230,15 @@ type ImportDetail struct {
 	Effects        []ImportEffectSummary `json:"effects"`
 }
 
+type CSVImportApplyResult struct {
+	JobID   string       `json:"jobId"`
+	Created int          `json:"created"`
+	Updated int          `json:"updated"`
+	Skipped int          `json:"skipped"`
+	Errored int          `json:"errored"`
+	Detail  ImportDetail `json:"detail"`
+}
+
 type ImportEffectSummary struct {
 	ID               string `json:"id"`
 	TargetEntityType string `json:"targetEntityType"`

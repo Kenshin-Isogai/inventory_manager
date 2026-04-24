@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
+import { Button } from '../components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { CollapsibleFilterBar } from '../components/CollapsibleFilterBar'
@@ -35,6 +36,7 @@ function buildTree(rows: ScopeOverviewRow[]): (ScopeOverviewRow & { children: Sc
 }
 
 export function ScopeOverviewPage() {
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const device = searchParams.get('device') ?? ''
   const [search, setSearch] = useState('')
@@ -58,6 +60,11 @@ export function ScopeOverviewPage() {
     if (value === '__all__') next.delete('device')
     else next.set('device', value)
     setSearchParams(next, { replace: true })
+  }
+
+  function scopedPath(path: string, row: ScopeOverviewRow) {
+    const params = new URLSearchParams({ device: row.deviceKey, scope: row.scopeKey })
+    return `${path}?${params.toString()}`
   }
 
   return (
@@ -112,18 +119,23 @@ export function ScopeOverviewPage() {
                   <TableHead className="text-right">Requirements</TableHead>
                   <TableHead className="text-right">Reservations</TableHead>
                   <TableHead className="text-right">Shortage Items</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {tree.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
                       No scopes found.
                     </TableCell>
                   </TableRow>
                 ) : (
                   tree.map((row) => (
-                    <TableRow key={row.scopeId} className="cursor-pointer hover:bg-muted/50">
+                    <TableRow
+                      key={row.scopeId}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => navigate(scopedPath('/app/operator/requirements', row))}
+                    >
                       <TableCell>
                         <span style={{ paddingLeft: `${row.depth * 1.25}rem` }} className="flex items-center gap-1">
                           {row.depth > 0 && <span className="text-muted-foreground">{'└'}</span>}
@@ -147,6 +159,19 @@ export function ScopeOverviewPage() {
                         ) : (
                           <span className="text-muted-foreground">0</span>
                         )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2" onClick={(event) => event.stopPropagation()}>
+                          <Button size="sm" variant="outline" onClick={() => navigate(scopedPath('/app/operator/requirements', row))}>
+                            Requirements
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => navigate(scopedPath('/app/operator/reservations', row))}>
+                            Reservations
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => navigate(scopedPath('/app/operator/shortage', row))}>
+                            Shortage
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))

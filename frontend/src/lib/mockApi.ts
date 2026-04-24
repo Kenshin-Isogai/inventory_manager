@@ -3,8 +3,16 @@ import type {
   AuthSessionResponse,
   BootstrapResponse,
   DashboardResponse,
+  ImportDetailResponse,
   ImportHistoryResponse,
+  ImportJob,
+  ImportPreviewResult,
+  ImportPreviewRow,
+  ImportType,
+  InventoryAdjustInput,
+  InventoryMoveInput,
   InventoryOverviewResponse,
+  InventoryReceiveInput,
   MasterSyncRunEntry,
   MasterDataSummaryResponse,
   ProcurementRequestCreateInput,
@@ -19,6 +27,11 @@ import type {
   OCRReviewUpdateInput,
   OCRRetryResult,
   OCRRegisterItemInput,
+  RequirementListResponse,
+  RequirementUpsertInput,
+  ReservationActionInput,
+  ReservationCreateInput,
+  ReservationDetail,
   ReservationListResponse,
   DeviceScopeListResponse,
   DeviceScopeUpsertInput,
@@ -381,6 +394,87 @@ const imports: ImportHistoryResponse = {
       createdAt: '2026-04-22T10:30:00Z',
     },
   ],
+}
+
+const importDetails: Record<string, ImportDetailResponse> = {
+  'imp-001': {
+    id: 'imp-001',
+    importType: 'items',
+    status: 'completed',
+    lifecycleState: 'applied',
+    fileName: 'items_master_20260422.csv',
+    summary: '{"inserted":3,"updated":0}',
+    createdAt: '2026-04-22T09:00:00Z',
+    undoneAt: '',
+    rows: [
+      {
+        rowNumber: 1,
+        status: 'valid',
+        code: 'insert_item',
+        message: 'Prepared item ER2',
+        raw: {
+          canonical_item_number: 'ER2',
+          description: 'Control relay',
+          manufacturer: 'Omron',
+          category: 'Relay',
+          default_supplier_id: 'sup-misumi',
+        },
+      },
+      {
+        rowNumber: 2,
+        status: 'valid',
+        code: 'insert_item',
+        message: 'Prepared item MK-44',
+        raw: {
+          canonical_item_number: 'MK-44',
+          description: 'Terminal block 4P',
+          manufacturer: 'Phoenix Contact',
+          category: 'Terminal Block',
+          default_supplier_id: 'sup-thorlabs',
+        },
+      },
+    ],
+    effects: [
+      {
+        id: 'impfx-001',
+        targetEntityType: 'item',
+        targetEntityId: 'item-er2',
+        effectType: 'insert',
+      },
+      {
+        id: 'impfx-002',
+        targetEntityType: 'item',
+        targetEntityId: 'item-mk44',
+        effectType: 'insert',
+      },
+    ],
+  },
+  'imp-002': {
+    id: 'imp-002',
+    importType: 'aliases',
+    status: 'pending',
+    lifecycleState: 'staged',
+    fileName: 'supplier_aliases_20260422.csv',
+    summary: '{"rows":14}',
+    createdAt: '2026-04-22T10:30:00Z',
+    undoneAt: '',
+    rows: [
+      {
+        rowNumber: 1,
+        status: 'valid',
+        code: 'stage_alias',
+        message: 'Alias row staged for review',
+        raw: {
+          supplier_id: 'sup-misumi',
+          supplier_name: 'MISUMI',
+          canonical_item_number: 'ER2',
+          supplier_item_number: 'ER2-P4',
+          units_per_order: '4',
+        },
+      },
+    ],
+    effects: [],
+  },
 }
 
 const masterData: MasterDataSummaryResponse = {
@@ -928,6 +1022,61 @@ export async function fetchReservations(device?: string, scope?: string) {
   }
 }
 
+export async function fetchRequirements(device?: string, scope?: string) {
+  const search = new URLSearchParams()
+  if (device) search.set('device', device)
+  if (scope) search.set('scope', scope)
+  const path = search.size > 0 ? `/api/v1/operator/requirements?${search.toString()}` : '/api/v1/operator/requirements'
+  try {
+    const response = await fetch(`${config.apiBaseUrl}${path}`, {
+      headers: authorizationHeaders(),
+    })
+    if (!response.ok) {
+      throw new Error(`request failed: ${response.status}`)
+    }
+    const payload = await response.json()
+    return payload.data as RequirementListResponse
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
+    const rows = shortages.rows
+      .filter((row) => (!device || row.device === device) && (!scope || row.scope === scope))
+      .map((row, index) => ({
+        id: `req-${row.device}-${row.scope}-${index}`,
+        device: row.device,
+        scope: row.scope,
+        itemId: inventoryOverview.balances.find((balance) => balance.itemNumber === row.itemNumber)?.itemId || row.itemNumber,
+        itemNumber: row.itemNumber,
+        description: row.description,
+        quantity: row.quantity,
+        note: 'Mock requirement derived from shortage data',
+      }))
+    return delay({ rows })
+  }
+}
+
+export async function upsertRequirement(input: RequirementUpsertInput) {
+  try {
+    const response = await fetch(`${config.apiBaseUrl}/api/v1/operator/requirements`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authorizationHeaders() },
+      body: JSON.stringify(input),
+    })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null)
+      throw new Error((payload as { error?: string } | null)?.error ?? `request failed: ${response.status}`)
+    }
+    const payload = await response.json()
+    return payload.data
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
+    return delay({ status: 'saved' })
+  }
+}
+
 export async function fetchDeviceScopes() {
   return fetchWithFallback<DeviceScopeListResponse>('/api/v1/operator/master-data/scopes', deviceScopes, true)
 }
@@ -1077,14 +1226,131 @@ export async function fetchMasterData() {
   return fetchWithFallback<MasterDataSummaryResponse>('/api/v1/admin/master-data', masterData, true)
 }
 
-export async function exportMasterDataCSV(exportType: 'items' | 'aliases') {
+const importRequiredHeaders: Record<ImportType, string[]> = {
+  items: ['canonical_item_number', 'description', 'manufacturer', 'category'],
+  aliases: ['supplier_id', 'canonical_item_number', 'supplier_item_number', 'units_per_order'],
+}
+
+function normalizeCSVHeader(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, '_')
+}
+
+function parseCSVLine(line: string) {
+  const fields: string[] = []
+  let current = ''
+  let inQuotes = false
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index]
+    if (char === '"') {
+      if (inQuotes && line[index + 1] === '"') {
+        current += '"'
+        index += 1
+      } else {
+        inQuotes = !inQuotes
+      }
+      continue
+    }
+    if (char === ',' && !inQuotes) {
+      fields.push(current)
+      current = ''
+      continue
+    }
+    current += char
+  }
+
+  fields.push(current)
+  return fields.map((field) => field.trim())
+}
+
+async function buildMockImportPreview(importType: ImportType, file: File): Promise<ImportPreviewResult> {
+  const lines = (await file.text())
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\uFEFF/g, ''))
+    .filter((line) => line.trim().length > 0)
+
+  if (lines.length === 0) {
+    throw new Error('csv header is required')
+  }
+
+  const headers = parseCSVLine(lines[0]).map(normalizeCSVHeader)
+  const rows: ImportPreviewRow[] = lines.slice(1).map((line, index) => {
+    const values = parseCSVLine(line)
+    const raw = headers.reduce<Record<string, string>>((accumulator, header, headerIndex) => {
+      accumulator[header] = values[headerIndex] ?? ''
+      return accumulator
+    }, {})
+    const missingHeader = importRequiredHeaders[importType].find((header) => raw[header]?.trim() === '')
+
+    if (missingHeader) {
+      return {
+        rowNumber: index + 1,
+        status: 'invalid',
+        code: 'missing_required_column',
+        message: `${missingHeader} is required`,
+        raw,
+      }
+    }
+
+    return {
+      rowNumber: index + 1,
+      status: 'valid',
+      code: importType === 'items' ? 'preview_item' : 'preview_alias',
+      message: importType === 'items' ? 'Row is ready to import as master item' : 'Row is ready to import as supplier alias',
+      raw,
+    }
+  })
+
+  return {
+    importType,
+    fileName: file.name,
+    status: rows.some((row) => row.status === 'invalid') ? 'has_errors' : 'ready',
+    rows,
+  }
+}
+
+function buildMockImportDetail(preview: ImportPreviewResult): ImportDetailResponse {
+  const createdAt = new Date().toISOString()
+  const id = `imp-${Date.now()}`
+  const validRows = preview.rows.filter((row) => row.status === 'valid')
+  const invalidRows = preview.rows.filter((row) => row.status === 'invalid')
+
+  return {
+    id,
+    importType: preview.importType,
+    status: invalidRows.length > 0 ? 'failed' : 'completed',
+    lifecycleState: invalidRows.length > 0 ? 'rejected' : 'applied',
+    fileName: preview.fileName,
+    summary: JSON.stringify({
+      inserted: validRows.length,
+      updated: 0,
+      invalid: invalidRows.length,
+    }),
+    createdAt,
+    undoneAt: '',
+    rows: preview.rows,
+    effects: validRows.map((row, index) => ({
+      id: `${id}-fx-${index + 1}`,
+      targetEntityType: preview.importType === 'items' ? 'item' : 'alias',
+      targetEntityId: `${preview.importType}-${row.rowNumber}`,
+      effectType: 'insert',
+    })),
+  }
+}
+
+export async function exportMasterDataCSV(exportType: ImportType) {
   try {
-    const response = await fetch(`${config.apiBaseUrl}/api/v1/admin/master-data/export?type=${exportType}`)
+    const response = await fetch(`${config.apiBaseUrl}/api/v1/admin/master-data/export?type=${exportType}`, {
+      headers: authorizationHeaders(),
+    })
     if (!response.ok) {
       throw new Error(`request failed: ${response.status}`)
     }
     return await response.text()
-  } catch {
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
     if (exportType === 'items') {
       return delay([
         'canonical_item_number,description,manufacturer,category,default_supplier_id,note',
@@ -1100,12 +1366,13 @@ export async function exportMasterDataCSV(exportType: 'items' | 'aliases') {
   }
 }
 
-export async function importMasterDataCSV(importType: 'items' | 'aliases', file: File) {
+export async function previewMasterDataCSV(importType: ImportType, file: File) {
   try {
     const formData = new FormData()
     formData.append('file', file)
-    const response = await fetch(`${config.apiBaseUrl}/api/v1/admin/master-data/import?type=${importType}`, {
+    const response = await fetch(`${config.apiBaseUrl}/api/v1/admin/master-data/import/preview?type=${importType}`, {
       method: 'POST',
+      headers: authorizationHeaders(),
       body: formData,
     })
     if (!response.ok) {
@@ -1113,20 +1380,101 @@ export async function importMasterDataCSV(importType: 'items' | 'aliases', file:
       throw new Error((payload as { error?: string } | null)?.error ?? `request failed: ${response.status}`)
     }
     const payload = await response.json()
-    return payload.data
-  } catch {
-    const createdAt = new Date().toISOString()
-    const job = {
-      id: `imp-${Date.now()}`,
-      importType,
-      status: 'completed',
-      fileName: file.name,
-      summary: '{"inserted":1,"updated":0}',
-      createdAt,
+    return payload.data as ImportPreviewResult
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
     }
+    return delay(await buildMockImportPreview(importType, file))
+  }
+}
+
+export async function importMasterDataCSV(importType: ImportType, file: File) {
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+    const response = await fetch(`${config.apiBaseUrl}/api/v1/admin/master-data/import?type=${importType}`, {
+      method: 'POST',
+      headers: authorizationHeaders(),
+      body: formData,
+    })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null)
+      throw new Error((payload as { error?: string } | null)?.error ?? `request failed: ${response.status}`)
+    }
+    const payload = await response.json()
+    return payload.data as ImportJob
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
+    const preview = await buildMockImportPreview(importType, file)
+    const detail = buildMockImportDetail(preview)
+    const job = {
+      id: detail.id,
+      importType,
+      status: detail.status,
+      fileName: detail.fileName,
+      summary: detail.summary,
+      createdAt: detail.createdAt,
+    }
+    importDetails[detail.id] = detail
     imports.rows.unshift(job)
     masterData.recentImportFiles.unshift(file.name)
     return delay(job)
+  }
+}
+
+export async function fetchImportDetail(id: string) {
+  try {
+    const response = await fetch(`${config.apiBaseUrl}/api/v1/operator/imports/${id}`, {
+      headers: authorizationHeaders(),
+    })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null)
+      throw new Error((payload as { error?: string } | null)?.error ?? `request failed: ${response.status}`)
+    }
+    const payload = await response.json()
+    return payload.data as ImportDetailResponse
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
+    const detail = importDetails[id]
+    if (!detail) {
+      throw new Error(`import detail not found: ${id}`)
+    }
+    return delay(detail)
+  }
+}
+
+export async function undoImport(id: string, actorId: string) {
+  try {
+    const response = await fetch(`${config.apiBaseUrl}/api/v1/operator/imports/${id}/undo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authorizationHeaders() },
+      body: JSON.stringify({ actorId }),
+    })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null)
+      throw new Error((payload as { error?: string } | null)?.error ?? `request failed: ${response.status}`)
+    }
+    const payload = await response.json()
+    return payload.data as ImportDetailResponse
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
+    const detail = importDetails[id]
+    if (!detail) {
+      throw new Error(`import detail not found: ${id}`)
+    }
+    importDetails[id] = {
+      ...detail,
+      lifecycleState: 'undone',
+      undoneAt: new Date().toISOString(),
+    }
+    return delay(importDetails[id])
   }
 }
 
@@ -1367,13 +1715,7 @@ export async function refreshProcurementBudgetCategories(projectId?: string) {
   }
 }
 
-export async function createReservation(input: {
-  itemId: string
-  deviceScopeId: string
-  quantity: number
-  requestedBy: string
-  note: string
-}) {
+export async function createReservation(input: ReservationCreateInput) {
   try {
     const response = await fetch(`${config.apiBaseUrl}/api/v1/operator/reservations`, {
       method: 'POST',
@@ -1399,13 +1741,78 @@ export async function createReservation(input: {
   }
 }
 
-export async function adjustInventory(input: {
-  itemId: string
-  locationCode: string
-  quantityDelta: number
-  deviceScopeId: string
-  note: string
-}) {
+export async function fetchReservationDetail(id: string) {
+  try {
+    const response = await fetch(`${config.apiBaseUrl}/api/v1/operator/reservations/${id}`, {
+      headers: authorizationHeaders(),
+    })
+    if (!response.ok) {
+      throw new Error(`request failed: ${response.status}`)
+    }
+    const payload = await response.json()
+    return payload.data as ReservationDetail
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
+    const row = reservations.rows.find((candidate) => candidate.id === id)
+    if (!row) throw new Error(`reservation not found: ${id}`)
+    return delay<ReservationDetail>({
+      id: row.id,
+      itemId: row.itemId || row.itemNumber,
+      itemNumber: row.itemNumber,
+      description: row.description,
+      deviceScopeId: '',
+      device: row.device,
+      scope: row.scope,
+      quantity: row.quantity,
+      allocatedQuantity: row.status === 'awaiting_stock' ? 0 : row.quantity,
+      status: row.status,
+      purpose: 'Mock reservation',
+      priority: 'normal',
+      neededByAt: '',
+      plannedUseAt: '',
+      holdUntilAt: '',
+      fulfilledAt: '',
+      releasedAt: '',
+      cancellationReason: '',
+      requestedBy: 'local-user',
+      note: '',
+      allocations: [],
+    })
+  }
+}
+
+export async function reservationAction(
+  id: string,
+  action: 'allocate' | 'release' | 'fulfill' | 'cancel' | 'undo',
+  input: ReservationActionInput,
+) {
+  try {
+    const response = await fetch(`${config.apiBaseUrl}/api/v1/operator/reservations/${id}/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authorizationHeaders() },
+      body: JSON.stringify(input),
+    })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null)
+      throw new Error((payload as { error?: string } | null)?.error ?? `request failed: ${response.status}`)
+    }
+    const payload = await response.json()
+    return payload.data as ReservationDetail
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
+    const row = reservations.rows.find((candidate) => candidate.id === id)
+    if (row) {
+      row.status = action === 'release' ? 'awaiting_stock' : action === 'cancel' ? 'cancelled' : 'allocated'
+    }
+    return fetchReservationDetail(id)
+  }
+}
+
+export async function adjustInventory(input: InventoryAdjustInput) {
   try {
     const response = await fetch(`${config.apiBaseUrl}/api/v1/inventory/adjustments`, {
       method: 'POST',
@@ -1422,6 +1829,53 @@ export async function adjustInventory(input: {
     if (target) {
       target.onHandQuantity += input.quantityDelta
       target.availableQuantity += input.quantityDelta
+    }
+    return delay({ status: 'created' })
+  }
+}
+
+export async function receiveInventory(input: InventoryReceiveInput) {
+  try {
+    const response = await fetch(`${config.apiBaseUrl}/api/v1/inventory/receives`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authorizationHeaders() },
+      body: JSON.stringify(input),
+    })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null)
+      throw new Error((payload as { error?: string } | null)?.error ?? `request failed: ${response.status}`)
+    }
+    const payload = await response.json()
+    return payload.data
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
+    const target = inventoryOverview.balances.find((row) => row.itemId === input.itemId && row.locationCode === input.locationCode)
+    if (target) {
+      target.onHandQuantity += input.quantity
+      target.availableQuantity += input.quantity
+    }
+    return delay({ status: 'created' })
+  }
+}
+
+export async function moveInventory(input: InventoryMoveInput) {
+  try {
+    const response = await fetch(`${config.apiBaseUrl}/api/v1/inventory/movements`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authorizationHeaders() },
+      body: JSON.stringify(input),
+    })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null)
+      throw new Error((payload as { error?: string } | null)?.error ?? `request failed: ${response.status}`)
+    }
+    const payload = await response.json()
+    return payload.data
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
     }
     return delay({ status: 'created' })
   }
@@ -1574,13 +2028,17 @@ export async function uploadOCRJob(file: File) {
     formData.append('createdBy', 'local-user')
     const response = await fetch(`${config.apiBaseUrl}/api/v1/procurement/ocr-jobs`, {
       method: 'POST',
+      headers: authorizationHeaders(),
       body: formData,
     })
     if (!response.ok) {
       throw new Error(`request failed: ${response.status}`)
     }
     return await response.json()
-  } catch {
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
     return delay({ data: { id: `ocr-${Date.now()}`, status: 'ready_for_review' } })
   }
 }
@@ -1589,7 +2047,7 @@ export async function assistOCRLine(jobId: string, input: OCRLineAssistInput) {
   try {
     const response = await fetch(`${config.apiBaseUrl}/api/v1/procurement/ocr-jobs/${jobId}/assist`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authorizationHeaders() },
       body: JSON.stringify(input),
     })
     if (!response.ok) {
@@ -1597,7 +2055,10 @@ export async function assistOCRLine(jobId: string, input: OCRLineAssistInput) {
     }
     const payload = await response.json()
     return payload.data as OCRLineAssistSuggestion
-  } catch {
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
     const fallback = ocrJobDetails[jobId]?.lines.find((line) => line.id === input.lineId)
     return delay<OCRLineAssistSuggestion>({
       lineId: input.lineId,
@@ -1617,7 +2078,7 @@ export async function updateOCRReview(jobId: string, input: OCRReviewUpdateInput
   try {
     const response = await fetch(`${config.apiBaseUrl}/api/v1/procurement/ocr-jobs/${jobId}/review`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authorizationHeaders() },
       body: JSON.stringify(input),
     })
     if (!response.ok) {
@@ -1625,7 +2086,10 @@ export async function updateOCRReview(jobId: string, input: OCRReviewUpdateInput
       throw new Error((payload as { error?: string } | null)?.error ?? `request failed: ${response.status}`)
     }
     return await response.json()
-  } catch {
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
     const detail = ocrJobDetails[jobId]
     if (!detail) {
       throw new Error(`ocr job not found: ${jobId}`)
@@ -1662,6 +2126,7 @@ export async function retryOCRJob(jobId: string) {
   try {
     const response = await fetch(`${config.apiBaseUrl}/api/v1/procurement/ocr-jobs/${jobId}/retry`, {
       method: 'POST',
+      headers: authorizationHeaders(),
     })
     if (!response.ok) {
       const payload = await response.json().catch(() => null)
@@ -1669,7 +2134,10 @@ export async function retryOCRJob(jobId: string) {
     }
     const payload = await response.json()
     return payload.data as OCRRetryResult
-  } catch {
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
     const row = ocrJobs.rows.find((candidate) => candidate.id === jobId)
     const detail = ocrJobDetails[jobId]
     if (!row || !detail) {
@@ -1693,14 +2161,17 @@ export async function registerOCRItem(jobId: string, input: OCRRegisterItemInput
   try {
     const response = await fetch(`${config.apiBaseUrl}/api/v1/procurement/ocr-jobs/${jobId}/register-item`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authorizationHeaders() },
       body: JSON.stringify(input),
     })
     if (!response.ok) {
       throw new Error(`request failed: ${response.status}`)
     }
     return await response.json()
-  } catch {
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
     return delay({ itemId: `item-${Date.now()}`, status: 'registered' })
   }
 }
@@ -1709,6 +2180,7 @@ export async function createProcurementDraftFromOCR(jobId: string) {
   try {
     const response = await fetch(`${config.apiBaseUrl}/api/v1/procurement/ocr-jobs/${jobId}/create-draft`, {
       method: 'POST',
+      headers: authorizationHeaders(),
     })
     if (!response.ok) {
       const payload = await response.json().catch(() => null)
