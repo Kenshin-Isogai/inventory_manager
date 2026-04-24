@@ -59,9 +59,9 @@ const bootstrap: BootstrapResponse = {
   authMode: 'none',
   authProvider: 'local',
   rbacMode: 'dry_run',
-  storageMode: 'local',
+  storageMode: 'filesystem',
   capabilities: [
-    'local-mode',
+    'mock-mode',
     'mock-read-models',
     'phase0-shell',
     'cloud-ready-config',
@@ -91,8 +91,8 @@ let currentSession: AuthSessionResponse = {
 const users: AppUserSummary[] = [
   {
     id: '00000000-0000-0000-0000-000000000001',
-    email: 'admin@example.local',
-    displayName: 'Local Admin',
+    email: 'admin@example.com',
+    displayName: 'Admin',
     status: 'active',
     roles: ['admin', 'inventory', 'operator', 'procurement'],
     provider: 'local',
@@ -102,8 +102,8 @@ const users: AppUserSummary[] = [
   },
   {
     id: '00000000-0000-0000-0000-000000000002',
-    email: 'operator@example.local',
-    displayName: 'Local Operator',
+    email: 'operator@example.com',
+    displayName: 'Operator',
     status: 'active',
     roles: ['operator'],
     provider: 'local',
@@ -113,8 +113,8 @@ const users: AppUserSummary[] = [
   },
   {
     id: '00000000-0000-0000-0000-000000000005',
-    email: 'inspector@example.local',
-    displayName: 'Local Inspector',
+    email: 'inspector@example.com',
+    displayName: 'Inspector',
     status: 'active',
     roles: ['receiving_inspector'],
     provider: 'local',
@@ -685,7 +685,7 @@ const procurementDetails: Record<string, ProcurementRequestDetailResponse> = {
         normalizedStatus: 'submitted',
         rawStatus: 'submitted_to_internal_flow',
         observedAt: '2026-04-23T09:00:00Z',
-        note: 'Submitted for local tracking',
+        note: 'Submitted for tracking',
       },
       {
         id: 'psh-002',
@@ -718,6 +718,7 @@ const ocrJobs: OCRJobListResponse = {
       status: 'ready_for_review',
       provider: 'mock',
       retryCount: 0,
+      createdBy: 'session-user',
       createdAt: '2026-04-22T11:00:00Z',
       updatedAt: '2026-04-22T11:01:00Z',
     },
@@ -1636,7 +1637,7 @@ export async function reconcileProcurementRequest(id: string) {
         normalizedStatus: detail.normalizedStatus,
         rawStatus: detail.rawStatus,
         observedAt,
-        note: 'Reconciled via local mock adapter',
+        note: 'Reconciled via mock adapter',
       },
       ...detail.statusHistory,
     ]
@@ -1769,7 +1770,7 @@ export async function createReservation(input: ReservationCreateInput) {
     reservations.rows.unshift({
       id: `RES-${Date.now()}`,
       itemNumber: input.itemId,
-      description: input.note || 'Local reservation draft',
+      description: input.note || 'Draft reservation',
       quantity: input.quantity,
       device: input.deviceScopeId.split('-')[1] ?? 'ER2',
       scope: input.deviceScopeId.split('-')[2] ?? 'powerboard',
@@ -1814,7 +1815,7 @@ export async function fetchReservationDetail(id: string) {
       fulfilledAt: '',
       releasedAt: '',
       cancellationReason: '',
-      requestedBy: 'local-user',
+      requestedBy: 'session-user',
       note: '',
       allocations: [],
     })
@@ -2051,8 +2052,9 @@ export async function createProcurementRequest(input: ProcurementRequestCreateIn
   }
 }
 
-export async function fetchOCRJobs() {
-  return fetchWithFallback<OCRJobListResponse>('/api/v1/procurement/ocr-jobs', ocrJobs, true)
+export async function fetchOCRJobs(createdBy?: string) {
+  const params = createdBy ? `?createdBy=${encodeURIComponent(createdBy)}` : ''
+  return fetchWithFallback<OCRJobListResponse>(`/api/v1/procurement/ocr-jobs${params}`, ocrJobs, true)
 }
 
 export async function fetchOCRJobDetail(id: string) {
@@ -2063,7 +2065,6 @@ export async function uploadOCRJob(file: File) {
   try {
     const formData = new FormData()
     formData.append('file', file)
-    formData.append('createdBy', 'local-user')
     const response = await fetch(`${config.apiBaseUrl}/api/v1/procurement/ocr-jobs`, {
       method: 'POST',
       headers: authorizationHeaders(),
@@ -2079,6 +2080,18 @@ export async function uploadOCRJob(file: File) {
     }
     return delay({ data: { id: `ocr-${Date.now()}`, status: 'ready_for_review' } })
   }
+}
+
+export async function deleteOCRJob(jobId: string) {
+  const response = await fetch(`${config.apiBaseUrl}/api/v1/procurement/ocr-jobs/${jobId}`, {
+    method: 'DELETE',
+    headers: authorizationHeaders(),
+  })
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}))
+    throw new Error((body as Record<string, string>).error || `request failed: ${response.status}`)
+  }
+  return await response.json()
 }
 
 export async function assistOCRLine(jobId: string, input: OCRLineAssistInput) {
@@ -2371,11 +2384,11 @@ async function fetchWithFallback<T>(path: string, fallback: T, nestedData = fals
 
 function resolveMockSession(token: string): AuthSessionResponse {
   const knownUser = token === 'local-admin-token'
-    ? users.find((candidate) => candidate.email === 'admin@example.local')
+    ? users.find((candidate) => candidate.email === 'admin@example.com')
     : token === 'local-operator-token'
-      ? users.find((candidate) => candidate.email === 'operator@example.local')
+      ? users.find((candidate) => candidate.email === 'operator@example.com')
       : token === 'local-inspector-token'
-        ? users.find((candidate) => candidate.email === 'inspector@example.local')
+        ? users.find((candidate) => candidate.email === 'inspector@example.com')
       : undefined
   if (knownUser) {
     return {

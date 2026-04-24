@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Separator } from '@/components/ui/separator'
 
+import { useAuthSession } from '@/hooks/useAuthSession'
 import { useMasterData } from '@/hooks/useMasterData'
 import { useOCRJobDetail } from '@/hooks/useOCRJobDetail'
 import { useOCRJobs } from '@/hooks/useOCRJobs'
@@ -20,6 +21,7 @@ import { useProcurementBudgetCategories } from '@/hooks/useProcurementBudgetCate
 import {
   assistOCRLine,
   createProcurementDraftFromOCR,
+  deleteOCRJob,
   retryOCRJob,
   registerOCRItem,
   updateOCRReview,
@@ -44,7 +46,10 @@ const UNASSIGNED_BUDGET_VALUE = '__unassigned_budget__'
 export function OCRQueuePage() {
   const navigate = useNavigate()
   const { mutate } = useSWRConfig()
-  const { data: jobs } = useOCRJobs()
+  const { data: session } = useAuthSession()
+  const [filterMyJobs, setFilterMyJobs] = useState(true)
+  const currentUserId = session?.user?.userId ?? ''
+  const { data: jobs } = useOCRJobs(filterMyJobs ? currentUserId : undefined)
   const { data: masterData } = useMasterData()
   const { data: budgetCategories } = useProcurementBudgetCategories()
   const uploadInputRef = useRef<HTMLInputElement>(null)
@@ -71,6 +76,7 @@ export function OCRQueuePage() {
   const [uploadError, setUploadError] = useState('')
   const [draftError, setDraftError] = useState('')
   const [reviewError, setReviewError] = useState('')
+  const [deletingJobId, setDeletingJobId] = useState('')
 
   const currentHeader = detail ? getReviewHeader(detail, reviewHeaderByJob[selectedID]) : null
   const currentLines = detail ? (detail.lines ?? []).map((line) => getReviewLine(line, reviewLinesByJob[selectedID]?.[line.id])) : []
@@ -112,7 +118,7 @@ export function OCRQueuePage() {
     setUploadError('')
     try {
       const result = await uploadOCRJob(pendingUploadFile)
-      await mutate('ocr-jobs')
+      await revalidateOCRJobs()
       const nextID = (result as { data?: { id?: string } } | undefined)?.data?.id
       if (nextID) {
         setSelectedIDOverride(nextID)
@@ -191,7 +197,7 @@ export function OCRQueuePage() {
       }
       await updateOCRReview(selectedID, payload)
       clearReviewOverrides(selectedID)
-      await Promise.all([mutate(['ocr-job-detail', selectedID]), mutate('ocr-jobs')])
+      await Promise.all([mutate(['ocr-job-detail', selectedID]), revalidateOCRJobs()])
     } catch (error) {
       setReviewError(error instanceof Error ? error.message : 'Failed to save OCR review')
       throw error
@@ -215,7 +221,7 @@ export function OCRQueuePage() {
         await handleSaveReview()
       }
       const result = await createProcurementDraftFromOCR(selectedID)
-      await Promise.all([mutate('ocr-jobs'), mutate(['ocr-job-detail', selectedID]), mutate('procurement-requests')])
+      await Promise.all([revalidateOCRJobs(), mutate(['ocr-job-detail', selectedID]), mutate('procurement-requests')])
       navigate(`/app/procurement/requests/${result.procurementRequestId}`)
     } catch (error) {
       setDraftError(error instanceof Error ? error.message : 'Failed to create procurement draft')
@@ -232,11 +238,29 @@ export function OCRQueuePage() {
     setReviewError('')
     try {
       await retryOCRJob(detail.id)
-      await Promise.all([mutate('ocr-jobs'), mutate(['ocr-job-detail', selectedID])])
+      await Promise.all([revalidateOCRJobs(), mutate(['ocr-job-detail', selectedID])])
     } catch (error) {
       setReviewError(error instanceof Error ? error.message : 'Failed to retry OCR job')
     } finally {
       setRetryingJob(false)
+    }
+  }
+
+  async function handleDeleteJob(jobId: string) {
+    if (!window.confirm('このジョブを削除しますか？アーティファクトも削除されます。')) {
+      return
+    }
+    setDeletingJobId(jobId)
+    try {
+      await deleteOCRJob(jobId)
+      if (selectedID === jobId) {
+        setSelectedIDOverride('')
+      }
+      await revalidateOCRJobs()
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Failed to delete OCR job')
+    } finally {
+      setDeletingJobId('')
     }
   }
 
@@ -271,6 +295,14 @@ export function OCRQueuePage() {
         },
       },
     }))
+  }
+
+  function revalidateOCRJobs() {
+    return mutate((key: unknown) => {
+      if (typeof key === 'string') return key === 'ocr-jobs'
+      if (Array.isArray(key)) return key[0] === 'ocr-jobs'
+      return false
+    })
   }
 
   function clearReviewOverrides(jobId: string) {
@@ -330,6 +362,15 @@ export function OCRQueuePage() {
               </div>
               {uploadError && <p className="text-sm text-destructive">{uploadError}</p>}
             </div>
+            <div className="flex items-center gap-2 mb-2">
+              <label className="flex items-center space-x-2">
+                <Checkbox
+                  checked={filterMyJobs}
+                  onCheckedChange={(checked) => setFilterMyJobs(checked === true)}
+                />
+                <span className="text-sm">自分のジョブのみ表示</span>
+              </label>
+            </div>
             <div className="border rounded-lg overflow-hidden">
               <Table>
                 <TableHeader>
@@ -339,6 +380,7 @@ export function OCRQueuePage() {
                     <TableHead>Provider</TableHead>
                     <TableHead>Retries</TableHead>
                     <TableHead>Updated</TableHead>
+                    <TableHead></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -355,10 +397,21 @@ export function OCRQueuePage() {
                       <TableCell className="text-sm text-muted-foreground">{job.provider}</TableCell>
                       <TableCell className="text-sm">{job.retryCount}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{job.updatedAt}</TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => { e.stopPropagation(); void handleDeleteJob(job.id) }}
+                          disabled={deletingJobId === job.id}
+                          className="text-destructive hover:text-destructive"
+                        >
+                          {deletingJobId === job.id ? '...' : '削除'}
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   )) : (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-sm text-muted-foreground">
+                      <TableCell colSpan={6} className="text-sm text-muted-foreground">
                         No OCR jobs yet. Select a quotation and start OCR to create the first job.
                       </TableCell>
                     </TableRow>

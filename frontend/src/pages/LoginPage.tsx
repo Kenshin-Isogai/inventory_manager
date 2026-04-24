@@ -67,7 +67,7 @@ export function LoginPage() {
         <CardHeader className="space-y-2">
           <CardTitle className="text-2xl">Sign In</CardTitle>
           <CardDescription>
-            Identity Platform email/password is the primary flow. Local tokens stay available only for development.
+            Sign in with your Identity Platform email address and password.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -146,7 +146,7 @@ export function LoginPage() {
             <>
               <Separator />
               <div className="space-y-3">
-                <p className="text-sm font-medium text-muted-foreground">Development: Local Login Profiles</p>
+                <p className="text-sm font-medium text-muted-foreground">Development sign-in profiles</p>
                 <div className="grid gap-2">
                   {LOCAL_LOGIN_PROFILES.map((profile) => (
                     <Button
@@ -173,14 +173,14 @@ export function LoginPage() {
                 }}
                 className="space-y-3"
               >
-                <p className="text-sm font-medium text-muted-foreground">Manual Token Input</p>
+                <p className="text-sm font-medium text-muted-foreground">Development token input</p>
                 <div className="space-y-2">
                   <Label htmlFor="manual-token">Token</Label>
                   <Input
                     id="manual-token"
                     value={manualToken}
                     onChange={(event) => setManualToken(event.target.value)}
-                    placeholder="local:new.user@example.local|New User"
+                    placeholder="Paste a development token"
                     className="text-xs"
                   />
                 </div>

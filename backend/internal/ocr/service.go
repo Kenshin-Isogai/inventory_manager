@@ -74,11 +74,11 @@ func (s *Service) CreateJob(ctx context.Context, fileName, contentType, createdB
 	return OCRJobCreateResult{ID: id, Status: "ready_for_review"}, nil
 }
 
-func (s *Service) Jobs(ctx context.Context) (OCRJobList, error) {
+func (s *Service) Jobs(ctx context.Context, createdBy string) (OCRJobList, error) {
 	if err := s.repo.RecoverStaleProcessingJobs(ctx, ocrStaleTimeout); err != nil {
 		return OCRJobList{}, err
 	}
-	return s.repo.Jobs(ctx)
+	return s.repo.Jobs(ctx, createdBy)
 }
 
 func (s *Service) JobDetail(ctx context.Context, id string) (OCRJobDetail, error) {
@@ -291,6 +291,43 @@ func (s *Service) CreateProcurementDraft(ctx context.Context, jobID string) (OCR
 		QuotationID:            result.QuotationID,
 		Status:                 result.Status,
 	}, nil
+}
+
+func (s *Service) DeleteJob(ctx context.Context, jobID string) error {
+	if jobID == "" {
+		return fmt.Errorf("job id is required")
+	}
+	artifactPath, err := s.repo.JobArtifactPath(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.SoftDeleteJob(ctx, jobID); err != nil {
+		return err
+	}
+	if artifactPath != "" {
+		_ = s.cleanupArtifact(ctx, artifactPath)
+	}
+	return nil
+}
+
+const ocrJobTTL = 10 * 24 * time.Hour // 10 days
+
+func (s *Service) CleanupExpiredJobs(ctx context.Context) (int, error) {
+	expired, err := s.repo.ListExpiredJobs(ctx, ocrJobTTL)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, job := range expired {
+		if err := s.repo.SoftDeleteJob(ctx, job.ID); err != nil {
+			continue
+		}
+		if job.ArtifactPath != "" {
+			_ = s.cleanupArtifact(ctx, job.ArtifactPath)
+		}
+		count++
+	}
+	return count, nil
 }
 
 func providerName(provider Provider) string {

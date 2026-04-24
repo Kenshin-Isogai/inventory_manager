@@ -12,9 +12,11 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
+import { useAuthSession } from '@/hooks/useAuthSession'
 import { useProcurementBudgetCategories } from '@/hooks/useProcurementBudgetCategories'
 import { useProcurementProjects } from '@/hooks/useProcurementProjects'
 import { useProcurementRequests } from '@/hooks/useProcurementRequests'
+import { resolveActorId } from '@/lib/auth'
 import {
   createProcurementRequest,
   refreshProcurementBudgetCategories,
@@ -24,8 +26,10 @@ import {
 export function ProcurementPage() {
   const navigate = useNavigate()
   const { mutate } = useSWRConfig()
+  const { data: session } = useAuthSession()
   const { data: requests } = useProcurementRequests()
   const { data: projects } = useProcurementProjects()
+  const actorId = resolveActorId(session)
 
   const [title, setTitle] = useState('New shortage follow-up')
   const [projectId, setProjectId] = useState('proj-er2-upgrade')
@@ -51,7 +55,7 @@ export function ProcurementPage() {
         supplierId: 'sup-misumi',
         quotationId: 'quote-001',
         sourceType: 'manual',
-        createdBy: 'local-user',
+        createdBy: actorId,
         lines: [
           {
             itemId: 'item-er2',

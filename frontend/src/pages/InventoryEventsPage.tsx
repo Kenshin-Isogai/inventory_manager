@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuthSession } from '@/hooks/useAuthSession'
 import { useDeviceScopes } from '@/hooks/useDeviceScopes'
 import { useInventoryOverview } from '@/hooks/useInventoryOverview'
+import { resolveActorId } from '@/lib/auth'
 import { applyInventoryOperationImport, previewInventoryOperationImport } from '@/lib/additionalApi'
 import { downloadTextFile } from '@/lib/csv'
 import { adjustInventory, moveInventory, receiveInventory } from '@/lib/mockApi'
@@ -55,7 +56,7 @@ export function InventoryEventsPage() {
 
   const activeDeviceScopes = deviceScopes?.rows.filter((row) => row.status !== 'inactive') ?? []
   const selectedDeviceScopeId = deviceScopeId || activeDeviceScopes[0]?.id || ''
-  const actorId = session?.user?.userId || 'local-user'
+  const actorId = resolveActorId(session)
   const items = useMemo(() => {
     const byId = new Map((data?.balances ?? []).map((row) => [row.itemId, row]))
     return Array.from(byId.values()).sort((left, right) => left.itemNumber.localeCompare(right.itemNumber))

@@ -112,6 +112,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, authService *auth.Service
 	mux.HandleFunc("POST /api/v1/procurement/ocr-jobs/{id}/create-draft", handlers.CreateOCRProcurementDraft)
 	mux.HandleFunc("POST /api/v1/procurement/ocr-jobs/{id}/retry", handlers.RetryOCRJob)
 	mux.HandleFunc("PUT /api/v1/procurement/ocr-jobs/{id}/register-item", handlers.RegisterOCRItem)
+	mux.HandleFunc("DELETE /api/v1/procurement/ocr-jobs/{id}", handlers.DeleteOCRJob)
 
 	// Additional spec 042401 routes
 	mux.HandleFunc("GET /api/v1/inventory/items/{id}/flow", handlers.ItemFlow)

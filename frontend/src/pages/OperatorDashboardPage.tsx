@@ -19,6 +19,7 @@ import { useAuthSession } from '@/hooks/useAuthSession'
 import { useDeviceScopes } from '@/hooks/useDeviceScopes'
 import { useInventoryOverview } from '@/hooks/useInventoryOverview'
 import { useRequirements } from '@/hooks/useRequirements'
+import { resolveActorId } from '@/lib/auth'
 import { applyRequirementsImport, confirmBulkReservation, exportRequirementsCSV, fetchBulkReservationPreview, previewRequirementsImport } from '@/lib/additionalApi'
 import { downloadTextFile } from '@/lib/csv'
 import { upsertRequirement } from '@/lib/mockApi'
@@ -75,7 +76,7 @@ export function OperatorDashboardPage() {
   }, [inventory?.balances])
   const activeScopes = scopes.filter((row) => row.status !== 'inactive')
   const selectedScope = activeScopes.find((row) => row.id === formScopeId)
-  const actorId = session?.user?.userId || 'local-user'
+  const actorId = resolveActorId(session)
 
   const filteredRows = (requirements?.rows ?? []).filter((row) => {
     if (!search) return true

@@ -7,6 +7,7 @@ type OCRJobSummary struct {
 	Status      string `json:"status"`
 	Provider    string `json:"provider"`
 	RetryCount  int    `json:"retryCount"`
+	CreatedBy   string `json:"createdBy"`
 	CreatedAt   string `json:"createdAt"`
 	UpdatedAt   string `json:"updatedAt"`
 }

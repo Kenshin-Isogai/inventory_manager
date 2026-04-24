@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"backend/internal/auth"
 	"backend/internal/config"
@@ -21,10 +22,11 @@ import (
 )
 
 type App struct {
-	cfg    config.Config
-	logger *slog.Logger
-	server *http.Server
-	db     *sql.DB
+	cfg       config.Config
+	logger    *slog.Logger
+	server    *http.Server
+	db        *sql.DB
+	ocrService *ocr.Service
 }
 
 func New(ctx context.Context, cfg config.Config) (*App, error) {
@@ -70,10 +72,11 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	return &App{
-		cfg:    cfg,
-		logger: logger,
-		server: server,
-		db:     db,
+		cfg:        cfg,
+		logger:     logger,
+		server:     server,
+		db:         db,
+		ocrService: phaseThreeService,
 	}, nil
 }
 
@@ -102,6 +105,8 @@ func (a *App) Run(ctx context.Context) error {
 		close(errCh)
 	}()
 
+	go a.runOCRCleanupLoop(ctx)
+
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), a.cfg.HTTP.WriteTimeout)
@@ -118,5 +123,27 @@ func (a *App) Run(ctx context.Context) error {
 			return err
 		}
 		return nil
+	}
+}
+
+func (a *App) runOCRCleanupLoop(ctx context.Context) {
+	const interval = 1 * time.Hour
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	a.logger.Info("ocr cleanup loop started", slog.Duration("interval", interval))
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			count, err := a.ocrService.CleanupExpiredJobs(ctx)
+			if err != nil {
+				a.logger.Error("ocr cleanup failed", slog.String("error", err.Error()))
+			} else if count > 0 {
+				a.logger.Info("ocr cleanup completed", slog.Int("deleted", count))
+			}
+		}
 	}
 }

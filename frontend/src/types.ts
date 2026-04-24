@@ -522,6 +522,7 @@ export type OCRJobSummary = {
   status: string
   provider: string
   retryCount: number
+  createdBy: string
   createdAt: string
   updatedAt: string
 }

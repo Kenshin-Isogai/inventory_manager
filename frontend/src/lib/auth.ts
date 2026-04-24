@@ -11,11 +11,11 @@ export type SessionUser = {
 }
 
 export const localFallbackSession: SessionUser = {
-  id: 'local-user',
-  displayName: 'Local Operator',
+  id: 'session-user',
+  displayName: 'Inventory Operator',
   roles: ['operator', 'inventory', 'admin'],
   defaultApp: 'operator',
-  email: 'operator@example.local',
+  email: 'operator@example.com',
   status: 'active',
   emailVerified: true,
 }
@@ -80,6 +80,10 @@ export function authorizationHeaders() {
     return {} as Record<string, string>
   }
   return { Authorization: `Bearer ${token}` } as Record<string, string>
+}
+
+export function resolveActorId(session?: AuthSessionResponse | null) {
+  return session?.user?.userId || session?.user?.email || localFallbackSession.id
 }
 
 export function resolveSessionUser(session?: AuthSessionResponse | null): SessionUser {

@@ -102,12 +102,24 @@ func (r *Repository) SaveResult(ctx context.Context, jobID string, doc Extracted
 	return tx.Commit()
 }
 
-func (r *Repository) Jobs(ctx context.Context) (OCRJobList, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, file_name, content_type, status, provider, retry_count, created_at, updated_at
-		FROM ocr_jobs
-		ORDER BY created_at DESC
-	`)
+func (r *Repository) Jobs(ctx context.Context, createdBy string) (OCRJobList, error) {
+	var rows *sql.Rows
+	var err error
+	if createdBy != "" {
+		rows, err = r.db.QueryContext(ctx, `
+			SELECT id, file_name, content_type, status, provider, retry_count, created_by, created_at, updated_at
+			FROM ocr_jobs
+			WHERE deleted_at IS NULL AND created_by = $1
+			ORDER BY created_at DESC
+		`, createdBy)
+	} else {
+		rows, err = r.db.QueryContext(ctx, `
+			SELECT id, file_name, content_type, status, provider, retry_count, created_by, created_at, updated_at
+			FROM ocr_jobs
+			WHERE deleted_at IS NULL
+			ORDER BY created_at DESC
+		`)
+	}
 	if err != nil {
 		return OCRJobList{}, fmt.Errorf("query ocr jobs: %w", err)
 	}
@@ -117,7 +129,7 @@ func (r *Repository) Jobs(ctx context.Context) (OCRJobList, error) {
 	for rows.Next() {
 		var row OCRJobSummary
 		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&row.ID, &row.FileName, &row.ContentType, &row.Status, &row.Provider, &row.RetryCount, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&row.ID, &row.FileName, &row.ContentType, &row.Status, &row.Provider, &row.RetryCount, &row.CreatedBy, &createdAt, &updatedAt); err != nil {
 			return OCRJobList{}, fmt.Errorf("scan ocr job: %w", err)
 		}
 		row.CreatedAt = createdAt.UTC().Format(time.RFC3339)
@@ -151,7 +163,7 @@ func (r *Repository) JobDetail(ctx context.Context, id string) (OCRJobDetail, er
 		LEFT JOIN ocr_job_results res ON res.job_id = j.id
 		LEFT JOIN supplier_quotations sq ON sq.source_ocr_job_id = j.id
 		LEFT JOIN procurement_batches pb ON pb.source_ocr_job_id = j.id
-		WHERE j.id = $1
+		WHERE j.id = $1 AND j.deleted_at IS NULL
 	`, id).Scan(
 		&detail.ID,
 		&detail.FileName,
@@ -290,6 +302,7 @@ func (r *Repository) RecoverStaleProcessingJobs(ctx context.Context, olderThan t
 		    processing_started_at = NULL,
 		    updated_at = NOW()
 		WHERE status = 'processing'
+		  AND deleted_at IS NULL
 		  AND COALESCE(processing_started_at, updated_at) < NOW() - $1::interval
 	`, fmt.Sprintf("%d seconds", int(olderThan.Seconds())))
 	if err != nil {
@@ -513,6 +526,63 @@ func (r *Repository) RegisterItemFromOCR(ctx context.Context, jobID string, inpu
 		return "", fmt.Errorf("commit tx: %w", err)
 	}
 	return itemID, nil
+}
+
+func (r *Repository) SoftDeleteJob(ctx context.Context, jobID string) error {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE ocr_jobs
+		SET deleted_at = NOW(), updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL
+	`, jobID)
+	if err != nil {
+		return fmt.Errorf("soft delete ocr job: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("ocr job not found or already deleted: %s", jobID)
+	}
+	return nil
+}
+
+func (r *Repository) JobArtifactPath(ctx context.Context, jobID string) (string, error) {
+	var path string
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT artifact_path FROM ocr_jobs WHERE id = $1
+	`, jobID).Scan(&path); err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("ocr job not found: %s", jobID)
+		}
+		return "", fmt.Errorf("query ocr job artifact: %w", err)
+	}
+	return path, nil
+}
+
+type cleanupRow struct {
+	ID           string
+	ArtifactPath string
+}
+
+func (r *Repository) ListExpiredJobs(ctx context.Context, olderThan time.Duration) ([]cleanupRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, artifact_path
+		FROM ocr_jobs
+		WHERE deleted_at IS NULL
+		  AND updated_at < NOW() - $1::interval
+	`, fmt.Sprintf("%d seconds", int(olderThan.Seconds())))
+	if err != nil {
+		return nil, fmt.Errorf("list expired ocr jobs: %w", err)
+	}
+	defer rows.Close()
+
+	var out []cleanupRow
+	for rows.Next() {
+		var row cleanupRow
+		if err := rows.Scan(&row.ID, &row.ArtifactPath); err != nil {
+			return nil, fmt.Errorf("scan expired ocr job: %w", err)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
 }
 
 func normalizeKey(value string) string {

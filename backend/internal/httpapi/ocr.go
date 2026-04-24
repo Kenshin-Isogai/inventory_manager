@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path/filepath"
 
+	"backend/internal/auth"
 	ocr "backend/internal/ocr"
 )
 
@@ -13,7 +14,8 @@ func (h Handlers) OCRJobList(w http.ResponseWriter, r *http.Request) {
 	if !h.requireActiveRole(w, r, "procurement") {
 		return
 	}
-	data, err := h.phaseThree.Jobs(r.Context())
+	createdBy := r.URL.Query().Get("createdBy")
+	data, err := h.phaseThree.Jobs(r.Context(), createdBy)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -37,7 +39,12 @@ func (h Handlers) CreateOCRJob(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	result, err := h.phaseThree.CreateJob(r.Context(), header.Filename, inferContentType(header.Filename, header.Header.Get("Content-Type")), r.FormValue("createdBy"), file)
+	principal := auth.PrincipalFromContext(r.Context())
+	createdBy := principal.UserID
+	if createdBy == "" {
+		createdBy = r.FormValue("createdBy")
+	}
+	result, err := h.phaseThree.CreateJob(r.Context(), header.Filename, inferContentType(header.Filename, header.Header.Get("Content-Type")), createdBy, file)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -135,6 +142,18 @@ func (h Handlers) RetryOCRJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, APIEnvelope[ocr.OCRRetryResult]{Data: result})
+}
+
+func (h Handlers) DeleteOCRJob(w http.ResponseWriter, r *http.Request) {
+	if !h.requireActiveRole(w, r, "procurement") {
+		return
+	}
+	id := r.PathValue("id")
+	if err := h.phaseThree.DeleteJob(r.Context(), id); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 func inferContentType(fileName, contentType string) string {

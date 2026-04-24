@@ -21,15 +21,16 @@ import { useDeviceScopes } from '@/hooks/useDeviceScopes'
 import { useInventoryOverview } from '@/hooks/useInventoryOverview'
 import { useReservations } from '@/hooks/useReservations'
 import { applyAllocationsImport, applyReservationsImport, exportReservationsCSV, previewAllocationsImport, previewReservationsImport } from '@/lib/additionalApi'
+import { resolveActorId } from '@/lib/auth'
 import { downloadTextFile } from '@/lib/csv'
 import { createReservation, fetchReservationDetail, reservationAction } from '@/lib/mockApi'
 import type { ImportPreviewResult, ReservationDetail } from '@/types'
 
 const RESERVATION_TEMPLATE =
   'device_scope_id,item_id,quantity,requested_by,purpose,priority,needed_by_at,planned_use_at,hold_until_at,note\n' +
-  'ds-er2-powerboard,item-er2,5,local-user,Build allocation,normal,2026-05-10,2026-05-10,2026-05-31,Initial reservation\n'
+  'ds-er2-powerboard,item-er2,5,session-user,Build allocation,normal,2026-05-10,2026-05-10,2026-05-31,Initial reservation\n'
 const ALLOCATION_TEMPLATE =
-  'reservation_id,location_code,quantity,actor_id,note\nRES-001,TOKYO-A1,3,local-user,Allocate available stock\n'
+  'reservation_id,location_code,quantity,actor_id,note\nRES-001,TOKYO-A1,3,session-user,Allocate available stock\n'
 
 function getStatusBadgeVariant(status: string) {
   switch (status.toLowerCase()) {
@@ -93,7 +94,7 @@ export function ReservationsPage() {
     const byId = new Map((inventory?.balances ?? []).map((row) => [row.itemId, row]))
     return Array.from(byId.values()).sort((left, right) => left.itemNumber.localeCompare(right.itemNumber))
   }, [inventory?.balances])
-  const actorId = session?.user?.userId || 'local-user'
+  const actorId = resolveActorId(session)
   const csvInvalidRows = (csvPreview?.rows ?? []).filter((row) => row.status === 'invalid')
 
   const filteredRows = (data?.rows ?? []).filter((row) => {
