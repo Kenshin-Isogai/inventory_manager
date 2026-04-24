@@ -1,0 +1,1095 @@
+package inventory
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/csv"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// ItemFlow returns chronological inventory events for a single item with running balance.
+func (r *Repository) ItemFlow(ctx context.Context, itemID string) (ItemFlowList, error) {
+	const q = `
+		SELECT
+			ie.event_type,
+			ie.quantity_delta,
+			COALESCE(ie.to_location_code, ie.from_location_code, ie.location_code, '') AS loc,
+			COALESCE(ie.source_type, '') AS source_type,
+			COALESCE(ie.source_id, '') AS source_id,
+			COALESCE(ie.note, '') AS note,
+			COALESCE(ie.occurred_at, ie.created_at) AS ts,
+			i.canonical_item_number
+		FROM inventory_events ie
+		JOIN items i ON i.id = ie.item_id
+		WHERE ie.item_id = $1
+		ORDER BY ts ASC, ie.id ASC
+	`
+	rows, err := r.db.QueryContext(ctx, q, itemID)
+	if err != nil {
+		return ItemFlowList{}, fmt.Errorf("query item flow: %w", err)
+	}
+	defer rows.Close()
+
+	var result ItemFlowList
+	result.ItemID = itemID
+	balance := 0
+	for rows.Next() {
+		var e ItemFlowEntry
+		var occurredAt time.Time
+		if err := rows.Scan(&e.EventType, &e.QuantityDelta, &e.LocationCode, &e.SourceType, &e.SourceRef, &e.Note, &occurredAt, &result.ItemNumber); err != nil {
+			return ItemFlowList{}, fmt.Errorf("scan item flow: %w", err)
+		}
+		balance += e.QuantityDelta
+		e.RunningBalance = balance
+		e.Date = occurredAt.Format(time.RFC3339)
+		result.Rows = append(result.Rows, e)
+	}
+	if result.Rows == nil {
+		result.Rows = []ItemFlowEntry{}
+	}
+	return result, rows.Err()
+}
+
+// ScopeOverview returns scope tree with summary counts for requirements, reservations, shortages.
+func (r *Repository) ScopeOverview(ctx context.Context, device string) (ScopeOverviewList, error) {
+	const q = `
+		WITH req_counts AS (
+			SELECT scope_id, COUNT(*) AS cnt
+			FROM scope_item_requirements
+			GROUP BY scope_id
+		),
+		res_counts AS (
+			SELECT device_scope_id AS scope_id, COUNT(*) AS cnt
+			FROM reservations
+			WHERE status NOT IN ('cancelled', 'released', 'fulfilled')
+			GROUP BY device_scope_id
+		),
+		shortage_counts AS (
+			SELECT
+				sir.scope_id,
+				COUNT(DISTINCT sir.item_id) AS cnt
+			FROM scope_item_requirements sir
+			LEFT JOIN (
+				SELECT item_id, COALESCE(SUM(available_quantity), 0) AS avail
+				FROM inventory_balances
+				GROUP BY item_id
+			) ib ON ib.item_id = sir.item_id
+			LEFT JOIN (
+				SELECT item_id, device_scope_id,
+					   COALESCE(SUM(quantity), 0) AS reserved
+				FROM reservations
+				WHERE status NOT IN ('cancelled', 'released')
+				GROUP BY item_id, device_scope_id
+			) rv ON rv.item_id = sir.item_id AND rv.device_scope_id = sir.scope_id
+			WHERE sir.quantity > COALESCE(rv.reserved, 0) + COALESCE(ib.avail, 0)
+			GROUP BY sir.scope_id
+		)
+		SELECT
+			COALESCE(d.device_key, ds.device_key) AS device_key,
+			COALESCE(d.name, ds.device_key) AS device_name,
+			ds.id AS scope_id,
+			ds.scope_key,
+			COALESCE(ds.scope_name, ds.scope_key) AS scope_name,
+			COALESCE(ds.scope_type, '') AS scope_type,
+			COALESCE(ds.parent_scope_id, '') AS parent_scope_id,
+			COALESCE(ds.status, 'active') AS status,
+			ds.planned_start_at,
+			COALESCE(rc.cnt, 0) AS requirements_count,
+			COALESCE(rsc.cnt, 0) AS reservations_count,
+			COALESCE(sc.cnt, 0) AS shortage_count,
+			COALESCE(ds.owner_department_key, '') AS owner_dept
+		FROM device_scopes ds
+		LEFT JOIN devices d ON d.id = ds.device_id
+		LEFT JOIN req_counts rc ON rc.scope_id = ds.id
+		LEFT JOIN res_counts rsc ON rsc.scope_id = ds.id
+		LEFT JOIN shortage_counts sc ON sc.scope_id = ds.id
+		WHERE ($1 = '' OR COALESCE(d.device_key, ds.device_key) = $1)
+		ORDER BY device_key, ds.scope_key
+	`
+	rows, err := r.db.QueryContext(ctx, q, device)
+	if err != nil {
+		return ScopeOverviewList{}, fmt.Errorf("query scope overview: %w", err)
+	}
+	defer rows.Close()
+
+	var result ScopeOverviewList
+	for rows.Next() {
+		var row ScopeOverviewRow
+		var plannedStart sql.NullTime
+		if err := rows.Scan(
+			&row.DeviceKey, &row.DeviceName, &row.ScopeID, &row.ScopeKey,
+			&row.ScopeName, &row.ScopeType, &row.ParentScopeID, &row.Status,
+			&plannedStart,
+			&row.RequirementsCount, &row.ReservationsCount, &row.ShortageItemCount,
+			&row.OwnerDepartment,
+		); err != nil {
+			return ScopeOverviewList{}, fmt.Errorf("scan scope overview: %w", err)
+		}
+		if plannedStart.Valid {
+			row.PlannedStartAt = plannedStart.Time.Format(time.RFC3339)
+		}
+		result.Rows = append(result.Rows, row)
+	}
+	if result.Rows == nil {
+		result.Rows = []ScopeOverviewRow{}
+	}
+	return result, rows.Err()
+}
+
+// ShortageTimeline returns shortage items split by scope start date availability.
+func (r *Repository) ShortageTimeline(ctx context.Context, device, scope string) (ShortageTimeline, error) {
+	// First get the scope's planned_start_at
+	var scopeID string
+	var plannedStart sql.NullTime
+	err := r.db.QueryRowContext(ctx, `
+		SELECT ds.id, ds.planned_start_at
+		FROM device_scopes ds
+		LEFT JOIN devices d ON d.id = ds.device_id
+		WHERE COALESCE(d.device_key, ds.device_key) = $1 AND ds.scope_key = $2
+		LIMIT 1
+	`, device, scope).Scan(&scopeID, &plannedStart)
+	if err != nil {
+		return ShortageTimeline{}, fmt.Errorf("find scope: %w", err)
+	}
+
+	result := ShortageTimeline{
+		Device: device,
+		Scope:  scope,
+	}
+	if plannedStart.Valid {
+		result.PlannedStartAt = plannedStart.Time.Format(time.RFC3339)
+	}
+
+	// Get requirements for this scope
+	const q = `
+		SELECT
+			sir.item_id,
+			i.canonical_item_number,
+			COALESCE(m.name, '') AS manufacturer,
+			COALESCE(i.description, '') AS description,
+			sir.quantity AS required_qty,
+			COALESCE(ib.avail, 0) AS current_available,
+			COALESCE(po_before.incoming, 0) AS incoming_before_start
+		FROM scope_item_requirements sir
+		JOIN items i ON i.id = sir.item_id
+		LEFT JOIN manufacturers m ON m.key = i.manufacturer_key
+		LEFT JOIN (
+			SELECT item_id, SUM(available_quantity) AS avail
+			FROM inventory_balances
+			GROUP BY item_id
+		) ib ON ib.item_id = sir.item_id
+		LEFT JOIN (
+			SELECT pl.item_id, SUM(pol.ordered_quantity - pol.received_quantity) AS incoming
+			FROM purchase_order_lines pol
+			JOIN procurement_lines pl ON pl.id = pol.procurement_line_id
+			WHERE pol.status NOT IN ('cancelled', 'received')
+			  AND pol.expected_arrival_date IS NOT NULL
+			  AND ($3::timestamptz IS NULL OR pol.expected_arrival_date <= $3::date)
+			GROUP BY pl.item_id
+		) po_before ON po_before.item_id = sir.item_id
+		WHERE sir.scope_id = $1
+		  AND sir.quantity > COALESCE(ib.avail, 0) + COALESCE(po_before.incoming, 0)
+		ORDER BY i.canonical_item_number
+	`
+
+	var startParam interface{} = nil
+	if plannedStart.Valid {
+		startParam = plannedStart.Time
+	}
+
+	rows, err := r.db.QueryContext(ctx, q, scopeID, device, startParam)
+	if err != nil {
+		return ShortageTimeline{}, fmt.Errorf("query shortage timeline: %w", err)
+	}
+	defer rows.Close()
+
+	itemIDs := []string{}
+	entryMap := map[string]*ShortageTimelineEntry{}
+	for rows.Next() {
+		var e ShortageTimelineEntry
+		var currentAvail, incomingBefore int
+		if err := rows.Scan(&e.ItemID, &e.ItemNumber, &e.Manufacturer, &e.Description,
+			&e.RequiredQuantity, &currentAvail, &incomingBefore); err != nil {
+			return ShortageTimeline{}, fmt.Errorf("scan shortage timeline: %w", err)
+		}
+		e.AvailableByStart = currentAvail + incomingBefore
+		e.ShortageAtStart = e.RequiredQuantity - e.AvailableByStart
+		if e.ShortageAtStart < 0 {
+			e.ShortageAtStart = 0
+		}
+		e.DelayedArrivals = []DelayedArrival{}
+		entryMap[e.ItemID] = &e
+		itemIDs = append(itemIDs, e.ItemID)
+	}
+	if err := rows.Err(); err != nil {
+		return ShortageTimeline{}, err
+	}
+
+	// Get delayed arrivals (after scope start)
+	if len(itemIDs) > 0 && plannedStart.Valid {
+		placeholders := make([]string, len(itemIDs))
+		args := make([]interface{}, 0, len(itemIDs)+1)
+		args = append(args, plannedStart.Time)
+		for i, id := range itemIDs {
+			placeholders[i] = fmt.Sprintf("$%d", i+2)
+			args = append(args, id)
+		}
+		delayQ := fmt.Sprintf(`
+			SELECT
+				pl.item_id,
+				pol.expected_arrival_date,
+				pol.ordered_quantity - pol.received_quantity AS pending_qty,
+				COALESCE(po.order_number, '') AS po_number,
+				pol.id AS pol_id
+			FROM purchase_order_lines pol
+			JOIN purchase_orders po ON po.id = pol.purchase_order_id
+			JOIN procurement_lines pl ON pl.id = pol.procurement_line_id
+			WHERE pol.status NOT IN ('cancelled', 'received')
+			  AND pol.expected_arrival_date > $1::date
+			  AND pl.item_id IN (%s)
+			ORDER BY pol.expected_arrival_date
+		`, strings.Join(placeholders, ","))
+
+		drows, err := r.db.QueryContext(ctx, delayQ, args...)
+		if err != nil {
+			return ShortageTimeline{}, fmt.Errorf("query delayed arrivals: %w", err)
+		}
+		defer drows.Close()
+		for drows.Next() {
+			var itemID, poNumber, polID string
+			var arrDate time.Time
+			var qty int
+			if err := drows.Scan(&itemID, &arrDate, &qty, &poNumber, &polID); err != nil {
+				return ShortageTimeline{}, fmt.Errorf("scan delayed arrival: %w", err)
+			}
+			if entry, ok := entryMap[itemID]; ok {
+				entry.DelayedArrivals = append(entry.DelayedArrivals, DelayedArrival{
+					ExpectedDate:        arrDate.Format("2006-01-02"),
+					Quantity:            qty,
+					PurchaseOrderNumber: poNumber,
+					PurchaseOrderLineID: polID,
+				})
+			}
+		}
+	}
+
+	for _, id := range itemIDs {
+		if e, ok := entryMap[id]; ok {
+			result.Rows = append(result.Rows, *e)
+		}
+	}
+	if result.Rows == nil {
+		result.Rows = []ShortageTimelineEntry{}
+	}
+	return result, nil
+}
+
+// EnhancedShortages returns shortages with procurement pipeline info.
+func (r *Repository) EnhancedShortages(ctx context.Context, device, scope, coverageRule string) (EnhancedShortageList, error) {
+	if coverageRule == "" {
+		coverageRule = "approved"
+	}
+	const q = `
+		WITH req AS (
+			SELECT
+				ds.device_key,
+				ds.scope_key,
+				sir.item_id,
+				SUM(sir.quantity) AS required_qty
+			FROM scope_item_requirements sir
+			JOIN device_scopes ds ON ds.id = sir.scope_id
+			LEFT JOIN devices d ON d.id = ds.device_id
+			WHERE ($1 = '' OR COALESCE(d.device_key, ds.device_key) = $1)
+			  AND ($2 = '' OR ds.scope_key = $2)
+			GROUP BY ds.device_key, ds.scope_key, sir.item_id
+		),
+		res AS (
+			SELECT
+				ds.device_key,
+				ds.scope_key,
+				r.item_id,
+				SUM(r.quantity) AS reserved_qty
+			FROM reservations r
+			JOIN device_scopes ds ON ds.id = r.device_scope_id
+			LEFT JOIN devices d ON d.id = ds.device_id
+			WHERE r.status NOT IN ('cancelled', 'released')
+			  AND ($1 = '' OR COALESCE(d.device_key, ds.device_key) = $1)
+			  AND ($2 = '' OR ds.scope_key = $2)
+			GROUP BY ds.device_key, ds.scope_key, r.item_id
+		),
+		inv AS (
+			SELECT item_id, SUM(available_quantity) AS avail
+			FROM inventory_balances
+			GROUP BY item_id
+		),
+		proc AS (
+			SELECT
+				pl.item_id,
+				SUM(CASE WHEN psp.normalized_status IN ('submitted','under_review','approved','ordered','partially_received')
+					THEN pl.requested_quantity ELSE 0 END) AS in_flow,
+				SUM(COALESCE(po_qty.ordered, 0)) AS ordered,
+				SUM(COALESCE(po_qty.received, 0)) AS received,
+				STRING_AGG(DISTINCT NULLIF(COALESCE(psp.external_request_reference, pb.batch_number), ''), ',') AS related_refs
+			FROM procurement_lines pl
+			JOIN procurement_batches pb ON pb.id = pl.batch_id
+			LEFT JOIN procurement_status_projections psp ON psp.batch_id = pb.id
+			LEFT JOIN (
+				SELECT procurement_line_id,
+				       SUM(ordered_quantity) AS ordered,
+				       SUM(received_quantity) AS received
+				FROM purchase_order_lines
+				WHERE status <> 'cancelled'
+				GROUP BY procurement_line_id
+			) po_qty ON po_qty.procurement_line_id = pl.id
+			GROUP BY pl.item_id
+		)
+		SELECT
+			req.device_key,
+			req.scope_key,
+			COALESCE(m.name, '') AS manufacturer,
+			i.canonical_item_number,
+			COALESCE(i.description, '') AS description,
+			i.id AS item_id,
+			req.required_qty,
+			COALESCE(res.reserved_qty, 0) AS reserved_qty,
+			COALESCE(inv.avail, 0) AS available_qty,
+			COALESCE(proc.in_flow, 0) AS in_flow,
+			COALESCE(proc.ordered, 0) AS ordered,
+			COALESCE(proc.received, 0) AS received,
+			COALESCE(proc.related_refs, '') AS related_refs
+		FROM req
+		JOIN items i ON i.id = req.item_id
+		LEFT JOIN manufacturers m ON m.key = i.manufacturer_key
+		LEFT JOIN res ON res.item_id = req.item_id AND res.device_key = req.device_key AND res.scope_key = req.scope_key
+		LEFT JOIN inv ON inv.item_id = req.item_id
+		LEFT JOIN proc ON proc.item_id = req.item_id
+		ORDER BY req.device_key, req.scope_key, i.canonical_item_number
+	`
+	rows, err := r.db.QueryContext(ctx, q, device, scope)
+	if err != nil {
+		return EnhancedShortageList{}, fmt.Errorf("query enhanced shortages: %w", err)
+	}
+	defer rows.Close()
+
+	result := EnhancedShortageList{CoverageRule: coverageRule}
+	for rows.Next() {
+		var row EnhancedShortageRow
+		var relatedRefs string
+		if err := rows.Scan(
+			&row.Device, &row.Scope, &row.Manufacturer, &row.ItemNumber, &row.Description,
+			&row.ItemID, &row.RequiredQuantity, &row.ReservedQuantity, &row.AvailableQuantity,
+			&row.InRequestFlowQuantity, &row.OrderedQuantity, &row.ReceivedQuantity, &relatedRefs,
+		); err != nil {
+			return EnhancedShortageList{}, fmt.Errorf("scan enhanced shortage: %w", err)
+		}
+		row.RawShortage = row.RequiredQuantity - row.ReservedQuantity - row.AvailableQuantity
+		if row.RawShortage < 0 {
+			row.RawShortage = 0
+		}
+		// Apply coverage rule
+		var covered int
+		switch coverageRule {
+		case "none":
+			covered = 0
+		case "submitted":
+			covered = row.InRequestFlowQuantity
+		case "approved":
+			covered = row.OrderedQuantity + row.ReceivedQuantity
+		case "ordered":
+			covered = row.OrderedQuantity + row.ReceivedQuantity
+		case "received":
+			covered = row.ReceivedQuantity
+		default:
+			covered = row.OrderedQuantity + row.ReceivedQuantity
+		}
+		row.ActionableShortage = row.RawShortage - covered
+		if row.ActionableShortage < 0 {
+			row.ActionableShortage = 0
+		}
+		row.RelatedProcurementRequests = splitCSVRefs(relatedRefs)
+		if row.RawShortage > 0 {
+			result.Rows = append(result.Rows, row)
+		}
+	}
+	if result.Rows == nil {
+		result.Rows = []EnhancedShortageRow{}
+	}
+	return result, rows.Err()
+}
+
+// ReservationsExportCSV returns reservation data as CSV string.
+func (r *Repository) ReservationsExportCSV(ctx context.Context, device, scope string) (string, error) {
+	const q = `
+		SELECT
+			COALESCE(d.device_key, ds.device_key) AS device,
+			ds.scope_key AS scope,
+			COALESCE(m.name, '') AS manufacturer,
+			i.canonical_item_number,
+			COALESCE(i.description, '') AS description,
+			rv.quantity,
+			rv.status,
+			rv.priority,
+			rv.needed_by_at,
+			COALESCE((
+				SELECT STRING_AGG(DISTINCT ra.source_type, ',')
+				FROM reservation_allocations ra WHERE ra.reservation_id = rv.id AND ra.status = 'allocated'
+			), '') AS source_types
+		FROM reservations rv
+		JOIN items i ON i.id = rv.item_id
+		JOIN device_scopes ds ON ds.id = rv.device_scope_id
+		LEFT JOIN devices d ON d.id = ds.device_id
+		LEFT JOIN manufacturers m ON m.key = i.manufacturer_key
+		WHERE rv.status NOT IN ('cancelled', 'released')
+		  AND ($1 = '' OR COALESCE(d.device_key, ds.device_key) = $1)
+		  AND ($2 = '' OR ds.scope_key = $2)
+		ORDER BY device, scope, i.canonical_item_number
+	`
+	rows, err := r.db.QueryContext(ctx, q, device, scope)
+	if err != nil {
+		return "", fmt.Errorf("query reservations export: %w", err)
+	}
+	defer rows.Close()
+
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	_ = w.Write([]string{"device", "scope", "manufacturer", "item_number", "description", "quantity", "status", "priority", "needed_by", "source_type"})
+	for rows.Next() {
+		var dev, sc, mfr, item, desc, status, priority, srcTypes string
+		var qty int
+		var neededBy sql.NullTime
+		if err := rows.Scan(&dev, &sc, &mfr, &item, &desc, &qty, &status, &priority, &neededBy, &srcTypes); err != nil {
+			return "", fmt.Errorf("scan reservations export: %w", err)
+		}
+		nb := ""
+		if neededBy.Valid {
+			nb = neededBy.Time.Format("2006-01-02")
+		}
+		_ = w.Write([]string{dev, sc, mfr, item, desc, strconv.Itoa(qty), status, priority, nb, srcTypes})
+	}
+	w.Flush()
+	return buf.String(), rows.Err()
+}
+
+// RequirementsExportCSV returns requirements data as CSV string.
+func (r *Repository) RequirementsExportCSV(ctx context.Context, device, scope string) (string, error) {
+	const q = `
+		SELECT
+			COALESCE(d.device_key, ds.device_key) AS device,
+			ds.scope_key AS scope,
+			COALESCE(m.name, '') AS manufacturer,
+			i.canonical_item_number,
+			COALESCE(i.description, '') AS description,
+			sir.quantity,
+			COALESCE(sir.note, '') AS note
+		FROM scope_item_requirements sir
+		JOIN device_scopes ds ON ds.id = sir.scope_id
+		JOIN items i ON i.id = sir.item_id
+		LEFT JOIN devices d ON d.id = ds.device_id
+		LEFT JOIN manufacturers m ON m.key = i.manufacturer_key
+		WHERE ($1 = '' OR COALESCE(d.device_key, ds.device_key) = $1)
+		  AND ($2 = '' OR ds.scope_key = $2)
+		ORDER BY device, scope, i.canonical_item_number
+	`
+	rows, err := r.db.QueryContext(ctx, q, device, scope)
+	if err != nil {
+		return "", fmt.Errorf("query requirements export: %w", err)
+	}
+	defer rows.Close()
+
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	_ = w.Write([]string{"device", "scope", "manufacturer", "item_number", "description", "quantity", "note"})
+	for rows.Next() {
+		var dev, sc, mfr, item, desc, note string
+		var qty int
+		if err := rows.Scan(&dev, &sc, &mfr, &item, &desc, &qty, &note); err != nil {
+			return "", fmt.Errorf("scan requirements export: %w", err)
+		}
+		_ = w.Write([]string{dev, sc, mfr, item, desc, strconv.Itoa(qty), note})
+	}
+	w.Flush()
+	return buf.String(), rows.Err()
+}
+
+// RequirementsImportPreview parses a requirements CSV and checks for issues.
+func (r *Repository) RequirementsImportPreview(ctx context.Context, fileName string, data []byte) (RequirementsImportPreview, error) {
+	reader := csv.NewReader(bytes.NewReader(data))
+	records, err := reader.ReadAll()
+	if err != nil {
+		return RequirementsImportPreview{}, fmt.Errorf("parse CSV: %w", err)
+	}
+	if len(records) < 2 {
+		return RequirementsImportPreview{}, fmt.Errorf("CSV must have a header row and at least one data row")
+	}
+
+	result := RequirementsImportPreview{FileName: fileName}
+	headerIndex := map[string]int{}
+	for idx, header := range records[0] {
+		headerIndex[strings.ToLower(strings.TrimSpace(header))] = idx
+	}
+	field := func(rec []string, names ...string) string {
+		for _, name := range names {
+			if idx, ok := headerIndex[name]; ok && idx < len(rec) {
+				return strings.TrimSpace(rec[idx])
+			}
+		}
+		return ""
+	}
+	for i, rec := range records[1:] {
+		row := RequirementsImportPreviewRow{RowNumber: i + 2}
+		if len(rec) == 0 {
+			row.Status = "error"
+			row.Message = "empty row"
+			result.Rows = append(result.Rows, row)
+			continue
+		}
+		row.DeviceKey = field(rec, "device", "device_key")
+		row.ScopeKey = field(rec, "scope", "scope_key")
+		row.Manufacturer = field(rec, "manufacturer", "manufacturer_name")
+		row.ItemNumber = field(rec, "item_number", "canonical_item_number")
+		row.Description = field(rec, "description", "item_description")
+		qtyRaw := field(rec, "quantity", "required_quantity")
+		if row.DeviceKey == "" || row.ScopeKey == "" || row.ItemNumber == "" || qtyRaw == "" {
+			row.Status = "error"
+			row.Message = "required columns are device, scope, item_number, quantity"
+			result.Rows = append(result.Rows, row)
+			continue
+		}
+		qty, err := strconv.Atoi(qtyRaw)
+		if err != nil || qty <= 0 {
+			row.Status = "error"
+			row.Message = "invalid quantity"
+			result.Rows = append(result.Rows, row)
+			continue
+		}
+		row.Quantity = qty
+
+		// Check scope exists
+		var scopeID string
+		err = r.db.QueryRowContext(ctx, `
+			SELECT ds.id FROM device_scopes ds
+			LEFT JOIN devices d ON d.id = ds.device_id
+			WHERE COALESCE(d.device_key, ds.device_key) = $1 AND ds.scope_key = $2
+		`, row.DeviceKey, row.ScopeKey).Scan(&scopeID)
+		if err != nil {
+			row.Status = "error"
+			row.Message = fmt.Sprintf("scope not found: %s/%s", row.DeviceKey, row.ScopeKey)
+			result.Rows = append(result.Rows, row)
+			continue
+		}
+		row.ScopeID = scopeID
+
+		// Check item exists
+		var itemID string
+		err = r.db.QueryRowContext(ctx, `
+			SELECT id FROM items WHERE canonical_item_number = $1
+		`, row.ItemNumber).Scan(&itemID)
+		if err != nil {
+			row.Status = "warning"
+			row.Message = "item not registered in master"
+			row.ItemRegistered = false
+		} else {
+			row.ItemID = itemID
+			row.ItemRegistered = true
+			row.Status = "ok"
+		}
+		result.Rows = append(result.Rows, row)
+	}
+	if result.Rows == nil {
+		result.Rows = []RequirementsImportPreviewRow{}
+	}
+	return result, nil
+}
+
+// RequirementsImportApply applies a requirements CSV import.
+func (r *Repository) RequirementsImportApply(ctx context.Context, fileName string, data []byte) (RequirementsImportResult, error) {
+	preview, err := r.RequirementsImportPreview(ctx, fileName, data)
+	if err != nil {
+		return RequirementsImportResult{}, err
+	}
+
+	var result RequirementsImportResult
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RequirementsImportResult{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	for _, row := range preview.Rows {
+		if row.Status == "error" || !row.ItemRegistered {
+			result.Skipped++
+			continue
+		}
+		id := uuid.New().String()
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO scope_item_requirements (id, scope_id, item_id, quantity, note)
+			VALUES ($1, $2, $3, $4, '')
+			ON CONFLICT (scope_id, item_id)
+			DO UPDATE SET quantity = scope_item_requirements.quantity + EXCLUDED.quantity,
+			             updated_at = NOW()
+		`, id, row.ScopeID, row.ItemID, row.Quantity)
+		if err != nil {
+			result.Errored++
+			continue
+		}
+		result.Created++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return RequirementsImportResult{}, fmt.Errorf("commit: %w", err)
+	}
+	return result, nil
+}
+
+// BulkReservationPreview generates allocation plan from requirements.
+func (r *Repository) BulkReservationPreview(ctx context.Context, scopeID string) (BulkReservationPreview, error) {
+	const q = `
+		SELECT
+			sir.item_id,
+			i.canonical_item_number,
+			COALESCE(m.name, '') AS manufacturer,
+			COALESCE(i.description, '') AS description,
+			sir.quantity AS required_qty,
+			COALESCE(existing_res.reserved, 0) AS already_reserved
+		FROM scope_item_requirements sir
+		JOIN items i ON i.id = sir.item_id
+		LEFT JOIN manufacturers m ON m.key = i.manufacturer_key
+		LEFT JOIN (
+			SELECT item_id, device_scope_id, SUM(quantity) AS reserved
+			FROM reservations
+			WHERE status NOT IN ('cancelled', 'released')
+			GROUP BY item_id, device_scope_id
+		) existing_res ON existing_res.item_id = sir.item_id AND existing_res.device_scope_id = sir.scope_id
+		WHERE sir.scope_id = $1
+		  AND sir.quantity > COALESCE(existing_res.reserved, 0)
+		ORDER BY i.canonical_item_number
+	`
+	rows, err := r.db.QueryContext(ctx, q, scopeID)
+	if err != nil {
+		return BulkReservationPreview{}, fmt.Errorf("query bulk preview: %w", err)
+	}
+	defer rows.Close()
+
+	result := BulkReservationPreview{ScopeID: scopeID}
+	for rows.Next() {
+		var row BulkReservationPreviewRow
+		var alreadyReserved int
+		if err := rows.Scan(&row.ItemID, &row.ItemNumber, &row.Manufacturer, &row.Description,
+			&row.RequiredQuantity, &alreadyReserved); err != nil {
+			return BulkReservationPreview{}, fmt.Errorf("scan bulk preview: %w", err)
+		}
+		needed := row.RequiredQuantity - alreadyReserved
+		row.RequiredQuantity = needed
+		row.AllocFromStockLocs = []StockAllocation{}
+		row.AllocFromOrderLocs = []OrderAllocation{}
+
+		// Check available stock
+		balRows, err := r.db.QueryContext(ctx, `
+			SELECT location_code, available_quantity
+			FROM inventory_balances
+			WHERE item_id = $1 AND available_quantity > 0
+			ORDER BY available_quantity DESC
+		`, row.ItemID)
+		if err != nil {
+			return BulkReservationPreview{}, fmt.Errorf("query balance for %s: %w", row.ItemID, err)
+		}
+		remaining := needed
+		for balRows.Next() {
+			var loc string
+			var avail int
+			if err := balRows.Scan(&loc, &avail); err != nil {
+				balRows.Close()
+				return BulkReservationPreview{}, err
+			}
+			alloc := avail
+			if alloc > remaining {
+				alloc = remaining
+			}
+			if alloc > 0 {
+				row.AllocFromStock += alloc
+				row.AllocFromStockLocs = append(row.AllocFromStockLocs, StockAllocation{
+					LocationCode: loc,
+					Quantity:     alloc,
+				})
+				remaining -= alloc
+			}
+			if remaining <= 0 {
+				break
+			}
+		}
+		balRows.Close()
+
+		// Check incoming orders
+		if remaining > 0 {
+			polRows, err := r.db.QueryContext(ctx, `
+				SELECT pol.id, po.order_number, pol.expected_arrival_date,
+				       pol.ordered_quantity - pol.received_quantity AS pending
+				FROM purchase_order_lines pol
+				JOIN purchase_orders po ON po.id = pol.purchase_order_id
+				JOIN procurement_lines pl ON pl.id = pol.procurement_line_id
+				WHERE pl.item_id = $1
+				  AND pol.status NOT IN ('cancelled', 'received')
+				  AND (pol.ordered_quantity - pol.received_quantity) > 0
+				ORDER BY pol.expected_arrival_date NULLS LAST
+			`, row.ItemID)
+			if err != nil {
+				return BulkReservationPreview{}, fmt.Errorf("query PO lines for %s: %w", row.ItemID, err)
+			}
+			for polRows.Next() {
+				var polID, poNum string
+				var arrDate sql.NullTime
+				var pending int
+				if err := polRows.Scan(&polID, &poNum, &arrDate, &pending); err != nil {
+					polRows.Close()
+					return BulkReservationPreview{}, err
+				}
+				alloc := pending
+				if alloc > remaining {
+					alloc = remaining
+				}
+				arr := ""
+				if arrDate.Valid {
+					arr = arrDate.Time.Format("2006-01-02")
+				}
+				row.AllocFromOrders += alloc
+				row.AllocFromOrderLocs = append(row.AllocFromOrderLocs, OrderAllocation{
+					PurchaseOrderLineID: polID,
+					PurchaseOrderNumber: poNum,
+					ExpectedArrival:     arr,
+					Quantity:            alloc,
+				})
+				remaining -= alloc
+				if remaining <= 0 {
+					break
+				}
+			}
+			polRows.Close()
+		}
+
+		row.Unallocated = remaining
+		if row.Unallocated < 0 {
+			row.Unallocated = 0
+		}
+		result.Rows = append(result.Rows, row)
+	}
+	if result.Rows == nil {
+		result.Rows = []BulkReservationPreviewRow{}
+	}
+	return result, rows.Err()
+}
+
+// BulkReservationConfirm creates reservations from confirmed bulk preview.
+func (r *Repository) BulkReservationConfirm(ctx context.Context, input BulkReservationConfirmInput) (BulkReservationResult, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return BulkReservationResult{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var result BulkReservationResult
+	for _, row := range input.Rows {
+		totalQty := 0
+		for _, sa := range row.StockAllocations {
+			totalQty += sa.Quantity
+		}
+		for _, oa := range row.OrderAllocations {
+			totalQty += oa.Quantity
+		}
+		if totalQty <= 0 {
+			continue
+		}
+
+		resID := uuid.New().String()
+		priority := row.Priority
+		if priority == "" {
+			priority = "normal"
+		}
+
+		var neededBy interface{} = nil
+		if row.NeededByAt != "" {
+			neededBy = row.NeededByAt
+		}
+
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO reservations (id, item_id, device_scope_id, quantity, status, requested_by, purpose, priority, needed_by_at, note)
+			VALUES ($1, $2, $3, $4, 'requested', $5, $6, $7, $8, '')
+		`, resID, row.ItemID, input.ScopeID, totalQty, input.ActorID, row.Purpose, priority, neededBy)
+		if err != nil {
+			return BulkReservationResult{}, fmt.Errorf("insert reservation: %w", err)
+		}
+
+		// Create stock allocations
+		for _, sa := range row.StockAllocations {
+			if sa.Quantity <= 0 {
+				continue
+			}
+			allocID := uuid.New().String()
+			_, err := tx.ExecContext(ctx, `
+				INSERT INTO reservation_allocations (id, reservation_id, item_id, location_code, quantity, status, source_type)
+				VALUES ($1, $2, $3, $4, $5, 'allocated', 'stock')
+			`, allocID, resID, row.ItemID, sa.LocationCode, sa.Quantity)
+			if err != nil {
+				return BulkReservationResult{}, fmt.Errorf("insert stock allocation: %w", err)
+			}
+			// Update inventory balance
+			if err := adjustReservedQuantityTx(ctx, tx, row.ItemID, sa.LocationCode, sa.Quantity); err != nil {
+				return BulkReservationResult{}, fmt.Errorf("adjust reserved qty: %w", err)
+			}
+			// Record inventory event
+			eventID := uuid.New().String()
+			_, err = tx.ExecContext(ctx, `
+				INSERT INTO inventory_events (id, event_type, item_id, location_code, to_location_code, quantity_delta, source_type, source_id, occurred_at)
+				VALUES ($1, 'reserve_allocate', $2, $3, $3, $4, 'reservation', $5, NOW())
+			`, eventID, row.ItemID, sa.LocationCode, 0, resID)
+			if err != nil {
+				return BulkReservationResult{}, fmt.Errorf("insert inventory event: %w", err)
+			}
+		}
+
+		// Create order allocations
+		for _, oa := range row.OrderAllocations {
+			if oa.Quantity <= 0 {
+				continue
+			}
+			allocID := uuid.New().String()
+			_, err := tx.ExecContext(ctx, `
+				INSERT INTO reservation_allocations (id, reservation_id, item_id, location_code, quantity, status, source_type, purchase_order_line_id)
+				VALUES ($1, $2, $3, 'INCOMING', $4, 'allocated', 'incoming_order', $5)
+			`, allocID, resID, row.ItemID, oa.Quantity, oa.PurchaseOrderLineID)
+			if err != nil {
+				return BulkReservationResult{}, fmt.Errorf("insert order allocation: %w", err)
+			}
+		}
+
+		// Record reservation event
+		reEventID := uuid.New().String()
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO reservation_events (id, reservation_id, event_type, quantity, actor_id, occurred_at)
+			VALUES ($1, $2, 'created', $3, $4, NOW())
+		`, reEventID, resID, totalQty, input.ActorID)
+		if err != nil {
+			return BulkReservationResult{}, fmt.Errorf("insert reservation event: %w", err)
+		}
+
+		result.Created++
+		result.IDs = append(result.IDs, resID)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return BulkReservationResult{}, fmt.Errorf("commit: %w", err)
+	}
+	if result.IDs == nil {
+		result.IDs = []string{}
+	}
+	return result, nil
+}
+
+// ArrivalCalendar returns PO line arrivals grouped by date for a month.
+func (r *Repository) ArrivalCalendar(ctx context.Context, yearMonth string) (ArrivalCalendar, error) {
+	const q = `
+		SELECT
+			pol.expected_arrival_date,
+			i.id AS item_id,
+			i.canonical_item_number,
+			COALESCE(m.name, '') AS manufacturer,
+			COALESCE(i.description, '') AS description,
+			pol.ordered_quantity - pol.received_quantity AS pending_qty,
+			COALESCE(po.order_number, '') AS po_number,
+			pol.id AS pol_id,
+			COALESCE(sq.quotation_number, '') AS quot_number,
+			COALESCE(s.name, '') AS supplier_name
+		FROM purchase_order_lines pol
+		JOIN purchase_orders po ON po.id = pol.purchase_order_id
+		JOIN procurement_lines pl ON pl.id = pol.procurement_line_id
+		JOIN procurement_batches pb ON pb.id = po.procurement_batch_id
+		JOIN items i ON i.id = pl.item_id
+		LEFT JOIN manufacturers m ON m.key = i.manufacturer_key
+		LEFT JOIN suppliers s ON s.id = pb.supplier_id
+		LEFT JOIN quotation_lines ql ON ql.id = pl.quotation_line_id
+		LEFT JOIN supplier_quotations sq ON sq.id = ql.quotation_id
+		WHERE pol.expected_arrival_date IS NOT NULL
+		  AND pol.status NOT IN ('cancelled', 'received')
+		  AND TO_CHAR(pol.expected_arrival_date, 'YYYY-MM') = $1
+		  AND (pol.ordered_quantity - pol.received_quantity) > 0
+		ORDER BY pol.expected_arrival_date, i.canonical_item_number
+	`
+	rows, err := r.db.QueryContext(ctx, q, yearMonth)
+	if err != nil {
+		return ArrivalCalendar{}, fmt.Errorf("query arrival calendar: %w", err)
+	}
+	defer rows.Close()
+
+	dayMap := map[string]*ArrivalCalendarDay{}
+	dayOrder := []string{}
+	for rows.Next() {
+		var arrDate time.Time
+		var item ArrivalCalendarItem
+		if err := rows.Scan(&arrDate, &item.ItemID, &item.ItemNumber, &item.Manufacturer,
+			&item.Description, &item.Quantity, &item.PurchaseOrderNumber,
+			&item.PurchaseOrderLineID, &item.QuotationNumber, &item.SupplierName); err != nil {
+			return ArrivalCalendar{}, fmt.Errorf("scan arrival calendar: %w", err)
+		}
+		dateStr := arrDate.Format("2006-01-02")
+		if _, ok := dayMap[dateStr]; !ok {
+			dayMap[dateStr] = &ArrivalCalendarDay{Date: dateStr}
+			dayOrder = append(dayOrder, dateStr)
+		}
+		dayMap[dateStr].Items = append(dayMap[dateStr].Items, item)
+	}
+
+	result := ArrivalCalendar{YearMonth: yearMonth}
+	for _, d := range dayOrder {
+		result.Days = append(result.Days, *dayMap[d])
+	}
+	if result.Days == nil {
+		result.Days = []ArrivalCalendarDay{}
+	}
+	return result, rows.Err()
+}
+
+// ItemSuggest returns items matching a fuzzy search query.
+func (r *Repository) ItemSuggest(ctx context.Context, query string) (ItemSuggestionList, error) {
+	const q = `
+		SELECT i.id, i.canonical_item_number, COALESCE(i.description, '') AS description,
+		       COALESCE(m.name, '') AS manufacturer, COALESCE(c.name, '') AS category
+		FROM items i
+		LEFT JOIN manufacturers m ON m.key = i.manufacturer_key
+		LEFT JOIN categories c ON c.key = i.category_key
+		WHERE i.canonical_item_number ILIKE '%' || $1 || '%'
+		   OR i.description ILIKE '%' || $1 || '%'
+		   OR m.name ILIKE '%' || $1 || '%'
+		ORDER BY
+		    CASE WHEN i.canonical_item_number ILIKE $1 || '%' THEN 0 ELSE 1 END,
+		    i.canonical_item_number
+		LIMIT 20
+	`
+	rows, err := r.db.QueryContext(ctx, q, query)
+	if err != nil {
+		return ItemSuggestionList{}, fmt.Errorf("query item suggest: %w", err)
+	}
+	defer rows.Close()
+
+	var result ItemSuggestionList
+	for rows.Next() {
+		var s ItemSuggestion
+		if err := rows.Scan(&s.ID, &s.ItemNumber, &s.Description, &s.Manufacturer, &s.Category); err != nil {
+			return ItemSuggestionList{}, fmt.Errorf("scan item suggest: %w", err)
+		}
+		result.Rows = append(result.Rows, s)
+	}
+	if result.Rows == nil {
+		result.Rows = []ItemSuggestion{}
+	}
+	return result, rows.Err()
+}
+
+// CategorySuggest returns categories matching a search query.
+func (r *Repository) CategorySuggest(ctx context.Context, query string) (CategorySuggestionList, error) {
+	const q = `
+		SELECT key, name FROM categories
+		WHERE name ILIKE '%' || $1 || '%'
+		ORDER BY
+		    CASE WHEN name ILIKE $1 || '%' THEN 0 ELSE 1 END,
+		    name
+		LIMIT 20
+	`
+	rows, err := r.db.QueryContext(ctx, q, query)
+	if err != nil {
+		return CategorySuggestionList{}, fmt.Errorf("query category suggest: %w", err)
+	}
+	defer rows.Close()
+
+	var result CategorySuggestionList
+	for rows.Next() {
+		var s CategorySuggestion
+		if err := rows.Scan(&s.Key, &s.Name); err != nil {
+			return CategorySuggestionList{}, fmt.Errorf("scan category suggest: %w", err)
+		}
+		result.Rows = append(result.Rows, s)
+	}
+	if result.Rows == nil {
+		result.Rows = []CategorySuggestion{}
+	}
+	return result, rows.Err()
+}
+
+// InventorySnapshotAtDate returns projected inventory at a future date.
+func (r *Repository) InventorySnapshotAtDate(ctx context.Context, device, scope, itemID, targetDate string) (InventorySnapshot, error) {
+	// First get the standard snapshot
+	snap, err := r.InventorySnapshot(ctx, device, scope, itemID)
+	if err != nil {
+		return InventorySnapshot{}, err
+	}
+
+	// Parse target date
+	td, err := time.Parse("2006-01-02", targetDate)
+	if err != nil {
+		return InventorySnapshot{}, fmt.Errorf("invalid target_date format (expected YYYY-MM-DD): %w", err)
+	}
+
+	// Get incoming quantities per item by target date
+	const q = `
+		SELECT pl.item_id, SUM(pol.ordered_quantity - pol.received_quantity) AS incoming
+		FROM purchase_order_lines pol
+		JOIN procurement_lines pl ON pl.id = pol.procurement_line_id
+		WHERE pol.status NOT IN ('cancelled', 'received')
+		  AND pol.expected_arrival_date IS NOT NULL
+		  AND pol.expected_arrival_date <= $1
+		  AND (pol.ordered_quantity - pol.received_quantity) > 0
+		GROUP BY pl.item_id
+	`
+	rows, err := r.db.QueryContext(ctx, q, td)
+	if err != nil {
+		return InventorySnapshot{}, fmt.Errorf("query projected incoming: %w", err)
+	}
+	defer rows.Close()
+
+	projected := map[string]int{}
+	for rows.Next() {
+		var itemID string
+		var incoming int
+		if err := rows.Scan(&itemID, &incoming); err != nil {
+			return InventorySnapshot{}, fmt.Errorf("scan projected incoming: %w", err)
+		}
+		projected[itemID] = incoming
+	}
+
+	// Update snapshot rows with projected values
+	for i := range snap.Rows {
+		row := &snap.Rows[i]
+		if inc, ok := projected[row.ItemID]; ok {
+			row.IncomingQuantity = inc
+		}
+		row.NetAvailableQuantity = row.FreeQuantity + row.IncomingQuantity - row.UncoveredDemandQuantity
+	}
+
+	// Regenerate signature
+	h := sha256.New()
+	h.Write([]byte(fmt.Sprintf("%v-%s", snap.Rows, targetDate)))
+	snap.SnapshotSignature = fmt.Sprintf("%x", h.Sum(nil))
+	snap.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
+
+	return snap, nil
+}
+
+func splitCSVRefs(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return []string{}
+	}
+	parts := strings.Split(value, ",")
+	refs := make([]string, 0, len(parts))
+	for _, part := range parts {
+		ref := strings.TrimSpace(part)
+		if ref != "" {
+			refs = append(refs, ref)
+		}
+	}
+	return refs
+}

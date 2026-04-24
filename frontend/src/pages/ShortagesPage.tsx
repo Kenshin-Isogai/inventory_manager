@@ -12,32 +12,63 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useImports } from '@/hooks/useImports'
-import { useShortages } from '@/hooks/useShortages'
+import { useEnhancedShortages } from '@/hooks/useEnhancedShortages'
+import { DeviceScopeFilters } from '@/components/context/DeviceScopeFilters'
+import { ItemInfoPopover } from '@/components/ItemInfoPopover'
+import { CollapsibleFilterBar } from '@/components/CollapsibleFilterBar'
 import { exportShortagesCSV } from '@/lib/mockApi'
 import { Download } from 'lucide-react'
 
 function getStatusBadgeVariant(status: string) {
   switch (status.toLowerCase()) {
     case 'completed':
-      return 'default'
+      return 'default' as const
     case 'pending':
-      return 'secondary'
+      return 'secondary' as const
     case 'failed':
-      return 'destructive'
+      return 'destructive' as const
     default:
-      return 'outline'
+      return 'outline' as const
   }
 }
 
+const COVERAGE_RULES = [
+  { value: 'none', label: 'No coverage' },
+  { value: 'submitted', label: 'Submitted+' },
+  { value: 'approved', label: 'Approved+ (default)' },
+  { value: 'ordered', label: 'Ordered+' },
+  { value: 'received', label: 'Received only' },
+]
+
 export function ShortagesPage() {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const device = searchParams.get('device') ?? ''
   const scope = searchParams.get('scope') ?? ''
-  const { data: shortages } = useShortages(device, scope)
+  const [coverageRule, setCoverageRule] = useState('approved')
+  const [search, setSearch] = useState('')
+  const { data: shortages } = useEnhancedShortages(device || undefined, scope || undefined, coverageRule)
   const { data: imports } = useImports()
   const [exportMessage, setExportMessage] = useState('')
   const [isExporting, setIsExporting] = useState(false)
+
+  const filteredRows = (shortages?.rows ?? []).filter((row) => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    return (
+      row.itemNumber.toLowerCase().includes(q) ||
+      row.manufacturer.toLowerCase().includes(q) ||
+      row.description.toLowerCase().includes(q)
+    )
+  })
+
+  function updateContext(key: 'device' | 'scope', value: string) {
+    const next = new URLSearchParams(searchParams)
+    if (value.trim() === '') next.delete(key)
+    else next.set(key, value)
+    setSearchParams(next, { replace: true })
+  }
 
   async function handleExport() {
     setIsExporting(true)
@@ -62,15 +93,43 @@ export function ShortagesPage() {
       <div className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight">Shortages</h1>
         <p className="text-muted-foreground">
-          Shortage summary {device || scope ? `filtered by Device: ${device}, Scope: ${scope}` : 'for all contexts'}.
+          Shortage analysis with procurement pipeline visibility.
         </p>
       </div>
 
       <Card>
+        <CardContent className="pt-6">
+          <div className="flex flex-wrap items-end gap-4">
+            <DeviceScopeFilters
+              device={device}
+              scope={scope}
+              onDeviceChange={(v) => updateContext('device', v)}
+              onScopeChange={(v) => updateContext('scope', v)}
+            />
+            <div className="w-48">
+              <label className="text-xs text-muted-foreground mb-1 block">Coverage Rule</label>
+              <Select value={coverageRule} onValueChange={setCoverageRule}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {COVERAGE_RULES.map((r) => (
+                    <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div className="space-y-1">
-            <CardTitle>Shortage List</CardTitle>
-            <CardDescription>Items that need replenishment</CardDescription>
+            <CardTitle>Shortage List ({filteredRows.length})</CardTitle>
+            <CardDescription>
+              Coverage rule: {COVERAGE_RULES.find((r) => r.value === coverageRule)?.label}
+            </CardDescription>
           </div>
           <Button
             onClick={() => void handleExport()}
@@ -89,41 +148,82 @@ export function ShortagesPage() {
               {exportMessage}
             </div>
           )}
-          <div className="overflow-x-auto">
+          <CollapsibleFilterBar
+            searchPlaceholder="Filter by item, manufacturer..."
+            onSearchChange={setSearch}
+          />
+          <div className="overflow-x-auto mt-4">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Device</TableHead>
                   <TableHead>Scope</TableHead>
-                  <TableHead>Manufacturer</TableHead>
                   <TableHead>Item</TableHead>
                   <TableHead>Description</TableHead>
-                  <TableHead className="w-20 text-right">Short Qty</TableHead>
+                  <TableHead className="text-right">Required</TableHead>
+                  <TableHead className="text-right">Reserved</TableHead>
+                  <TableHead className="text-right">Available</TableHead>
+                  <TableHead className="text-right">Raw Short</TableHead>
+                  <TableHead className="text-right">In Flow</TableHead>
+                  <TableHead className="text-right">Ordered</TableHead>
+                  <TableHead className="text-right">Received</TableHead>
+                  <TableHead className="text-right">Actionable</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {shortages?.rows.map((row) => (
-                  <TableRow key={`${row.device}-${row.scope}-${row.itemNumber}`}>
-                    <TableCell className="font-medium text-sm">{row.device}</TableCell>
-                    <TableCell className="text-sm">{row.scope}</TableCell>
-                    <TableCell className="text-sm">{row.manufacturer}</TableCell>
-                    <TableCell className="text-sm">{row.itemNumber}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{row.description}</TableCell>
-                    <TableCell className="text-right">
-                      <Badge variant="destructive" className="text-xs">
-                        {row.quantity}
-                      </Badge>
+                {filteredRows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={12} className="text-center text-muted-foreground py-8">
+                      No shortages found.
                     </TableCell>
                   </TableRow>
-                ))}
+                ) : (
+                  filteredRows.map((row) => (
+                    <TableRow key={`${row.device}-${row.scope}-${row.itemNumber}`}>
+                      <TableCell className="text-sm">{row.device}</TableCell>
+                      <TableCell className="text-sm">{row.scope}</TableCell>
+                      <TableCell>
+                        <ItemInfoPopover
+                          itemNumber={row.itemNumber}
+                          description={row.description}
+                          manufacturer={row.manufacturer}
+                        />
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground max-w-[10rem] truncate">
+                        {row.description}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{row.requiredQuantity}</TableCell>
+                      <TableCell className="text-right tabular-nums">{row.reservedQuantity}</TableCell>
+                      <TableCell className="text-right tabular-nums">{row.availableQuantity}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {row.rawShortage > 0 ? (
+                          <Badge variant="destructive" className="text-xs">{row.rawShortage}</Badge>
+                        ) : (
+                          <span className="text-muted-foreground">0</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-blue-600">
+                        {row.inRequestFlowQuantity || '—'}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-blue-600">
+                        {row.orderedQuantity || '—'}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-green-600">
+                        {row.receivedQuantity || '—'}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums font-semibold">
+                        {row.actionableShortage > 0 ? (
+                          <Badge variant="destructive">{row.actionableShortage}</Badge>
+                        ) : (
+                          <span className="text-green-600">0</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           </div>
-          {shortages?.rows.length === 0 && (
-            <div className="text-center py-8 text-muted-foreground">
-              No shortages found.
-            </div>
-          )}
         </CardContent>
       </Card>
 

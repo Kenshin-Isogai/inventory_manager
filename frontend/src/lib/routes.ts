@@ -13,10 +13,20 @@ import {
   Users,
   Shield,
   Database,
+  GitBranch,
+  Calendar,
 } from 'lucide-react'
 import type { RouteDefinition } from '../types'
 
 export const routes: RouteDefinition[] = [
+  {
+    app: 'operator',
+    path: '/app/operator/scopes',
+    label: 'Scope Overview',
+    description: 'Scope tree with summary counts',
+    roles: ['operator', 'inventory', 'admin'],
+    icon: GitBranch,
+  },
   {
     app: 'operator',
     path: '/app/operator/requirements',
@@ -80,6 +90,14 @@ export const routes: RouteDefinition[] = [
     description: 'Receive, move, and adjust inventory',
     roles: ['inventory', 'admin'],
     icon: ArrowRightLeft,
+  },
+  {
+    app: 'inventory',
+    path: '/app/inventory/arrivals/calendar',
+    label: 'Arrival Calendar',
+    description: 'Expected arrivals by date',
+    roles: ['inventory', 'receiving_inspector', 'admin'],
+    icon: Calendar,
   },
   {
     app: 'procurement',

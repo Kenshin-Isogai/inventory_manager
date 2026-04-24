@@ -47,7 +47,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, authService *auth.Service
 	mux.HandleFunc("POST /api/v1/operator/imports/{id}/undo", handlers.UndoImport)
 	mux.HandleFunc("POST /api/v1/operator/reservations", handlers.CreateReservation)
 	mux.HandleFunc("GET /api/v1/inventory/overview", handlers.InventoryOverview)
-	mux.HandleFunc("GET /api/v1/inventory/snapshot", handlers.InventorySnapshot)
+	mux.HandleFunc("GET /api/v1/inventory/snapshot", handlers.InventorySnapshotAtDate)
 	mux.HandleFunc("GET /api/v1/inventory/items", handlers.InventoryItems)
 	mux.HandleFunc("GET /api/v1/inventory/locations", handlers.InventoryLocations)
 	mux.HandleFunc("GET /api/v1/inventory/events", handlers.InventoryEvents)
@@ -108,6 +108,22 @@ func NewRouter(cfg config.Config, logger *slog.Logger, authService *auth.Service
 	mux.HandleFunc("POST /api/v1/procurement/ocr-jobs/{id}/create-draft", handlers.CreateOCRProcurementDraft)
 	mux.HandleFunc("POST /api/v1/procurement/ocr-jobs/{id}/retry", handlers.RetryOCRJob)
 	mux.HandleFunc("PUT /api/v1/procurement/ocr-jobs/{id}/register-item", handlers.RegisterOCRItem)
+
+	// Additional spec 042401 routes
+	mux.HandleFunc("GET /api/v1/inventory/items/{id}/flow", handlers.ItemFlow)
+	mux.HandleFunc("GET /api/v1/inventory/arrivals/calendar", handlers.ArrivalCalendar)
+	mux.HandleFunc("GET /api/v1/operator/scope-overview", handlers.ScopeOverview)
+	mux.HandleFunc("GET /api/v1/operator/shortages/timeline", handlers.ShortageTimeline)
+	mux.HandleFunc("GET /api/v1/operator/shortages/enhanced", handlers.EnhancedShortages)
+	mux.HandleFunc("GET /api/v1/operator/reservations/export", handlers.ReservationsExportCSV)
+	mux.HandleFunc("GET /api/v1/operator/requirements/export", handlers.RequirementsExportCSV)
+	mux.HandleFunc("POST /api/v1/operator/requirements/import/preview", handlers.RequirementsImportPreview)
+	mux.HandleFunc("POST /api/v1/operator/requirements/import", handlers.RequirementsImportApply)
+	mux.HandleFunc("GET /api/v1/operator/reservations/bulk-preview", handlers.BulkReservationPreview)
+	mux.HandleFunc("POST /api/v1/operator/reservations/bulk-preview", handlers.BulkReservationPreview)
+	mux.HandleFunc("POST /api/v1/operator/reservations/bulk-confirm", handlers.BulkReservationConfirm)
+	mux.HandleFunc("GET /api/v1/admin/master-data/items/suggest", handlers.ItemSuggest)
+	mux.HandleFunc("GET /api/v1/admin/master-data/categories/suggest", handlers.CategorySuggest)
 
 	var handler http.Handler = mux
 	if authService != nil {

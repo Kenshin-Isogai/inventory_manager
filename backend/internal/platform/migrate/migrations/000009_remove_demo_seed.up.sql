@@ -49,8 +49,16 @@ WHERE id IN ('alias-er2-pack4', 'alias-mk44-bulk');
 DELETE FROM device_scopes
 WHERE id IN ('ds-er2-powerboard', 'ds-mk4-cabinet');
 
+UPDATE ocr_result_lines
+SET item_id = NULL
+WHERE item_id IN ('item-er2', 'item-mk44', 'item-cn88');
+
 DELETE FROM items
 WHERE id IN ('item-er2', 'item-mk44', 'item-cn88');
+
+UPDATE ocr_job_results
+SET supplier_id = NULL
+WHERE supplier_id IN ('sup-thorlabs', 'sup-misumi');
 
 DELETE FROM suppliers
 WHERE id IN ('sup-thorlabs', 'sup-misumi');

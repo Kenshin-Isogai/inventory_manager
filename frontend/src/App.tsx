@@ -56,6 +56,17 @@ const AdminRolesPage = lazy(() =>
 )
 const AdminMasterPage = lazy(() => import('./pages/AdminPage').then((m) => ({ default: m.AdminPage })))
 
+// Additional spec 042401 pages
+const ScopeOverviewPage = lazy(() =>
+  import('./pages/ScopeOverviewPage').then((m) => ({ default: m.ScopeOverviewPage }))
+)
+const ItemFlowPage = lazy(() =>
+  import('./pages/ItemFlowPage').then((m) => ({ default: m.ItemFlowPage }))
+)
+const ArrivalCalendarPage = lazy(() =>
+  import('./pages/ArrivalCalendarPage').then((m) => ({ default: m.ArrivalCalendarPage }))
+)
+
 // Loading fallback
 function PageLoader() {
   return (
@@ -118,6 +129,14 @@ function App() {
             }
           />
           <Route
+            path="/app/operator/scopes"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <ScopeOverviewPage />
+              </Suspense>
+            }
+          />
+          <Route
             path="/app/operator/imports/upload"
             element={
               <Suspense fallback={<PageLoader />}>
@@ -150,6 +169,22 @@ function App() {
             element={
               <Suspense fallback={<PageLoader />}>
                 <InventoryLocationsPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/app/inventory/items/:id/flow"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <ItemFlowPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/app/inventory/arrivals/calendar"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <ArrivalCalendarPage />
               </Suspense>
             }
           />

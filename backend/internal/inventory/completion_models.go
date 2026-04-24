@@ -380,3 +380,242 @@ type LocationUpsertInput struct {
 	LocationType string `json:"locationType"`
 	IsActive     bool   `json:"isActive"`
 }
+
+// --- Additional spec 042401 models ---
+
+// ItemFlow: per-item chronological inventory movement history
+type ItemFlowEntry struct {
+	Date           string `json:"date"`
+	EventType      string `json:"eventType"`
+	QuantityDelta  int    `json:"quantityDelta"`
+	RunningBalance int    `json:"runningBalance"`
+	SourceType     string `json:"sourceType"`
+	SourceRef      string `json:"sourceRef"`
+	Note           string `json:"note"`
+	LocationCode   string `json:"locationCode"`
+}
+
+type ItemFlowList struct {
+	ItemID     string          `json:"itemId"`
+	ItemNumber string          `json:"itemNumber"`
+	Rows       []ItemFlowEntry `json:"rows"`
+}
+
+// ScopeOverview: scope tree with summary counts
+type ScopeOverviewRow struct {
+	DeviceKey         string `json:"deviceKey"`
+	DeviceName        string `json:"deviceName"`
+	ScopeID           string `json:"scopeId"`
+	ScopeKey          string `json:"scopeKey"`
+	ScopeName         string `json:"scopeName"`
+	ScopeType         string `json:"scopeType"`
+	ParentScopeID     string `json:"parentScopeId"`
+	Status            string `json:"status"`
+	PlannedStartAt    string `json:"plannedStartAt"`
+	RequirementsCount int    `json:"requirementsCount"`
+	ReservationsCount int    `json:"reservationsCount"`
+	ShortageItemCount int    `json:"shortageItemCount"`
+	OwnerDepartment   string `json:"ownerDepartment"`
+}
+
+type ScopeOverviewList struct {
+	Rows []ScopeOverviewRow `json:"rows"`
+}
+
+// ShortageTimeline: shortage broken down by scope start date
+type DelayedArrival struct {
+	ExpectedDate        string `json:"expectedDate"`
+	Quantity            int    `json:"quantity"`
+	PurchaseOrderNumber string `json:"purchaseOrderNumber"`
+	PurchaseOrderLineID string `json:"purchaseOrderLineId"`
+}
+
+type ShortageTimelineEntry struct {
+	ItemID           string           `json:"itemId"`
+	ItemNumber       string           `json:"itemNumber"`
+	Manufacturer     string           `json:"manufacturer"`
+	Description      string           `json:"description"`
+	RequiredQuantity int              `json:"requiredQuantity"`
+	AvailableByStart int              `json:"availableByStart"`
+	ShortageAtStart  int              `json:"shortageAtStart"`
+	DelayedArrivals  []DelayedArrival `json:"delayedArrivals"`
+}
+
+type ShortageTimeline struct {
+	Device         string                  `json:"device"`
+	Scope          string                  `json:"scope"`
+	PlannedStartAt string                  `json:"plannedStartAt"`
+	Rows           []ShortageTimelineEntry `json:"rows"`
+}
+
+// Enhanced shortage with procurement pipeline info
+type EnhancedShortageRow struct {
+	Device                     string   `json:"device"`
+	Scope                      string   `json:"scope"`
+	Manufacturer               string   `json:"manufacturer"`
+	ItemNumber                 string   `json:"itemNumber"`
+	Description                string   `json:"description"`
+	ItemID                     string   `json:"itemId"`
+	RequiredQuantity           int      `json:"requiredQuantity"`
+	ReservedQuantity           int      `json:"reservedQuantity"`
+	AvailableQuantity          int      `json:"availableQuantity"`
+	RawShortage                int      `json:"rawShortage"`
+	InRequestFlowQuantity      int      `json:"inRequestFlowQuantity"`
+	OrderedQuantity            int      `json:"orderedQuantity"`
+	ReceivedQuantity           int      `json:"receivedQuantity"`
+	ActionableShortage         int      `json:"actionableShortage"`
+	RelatedProcurementRequests []string `json:"relatedProcurementRequests"`
+}
+
+type EnhancedShortageList struct {
+	CoverageRule string                `json:"coverageRule"`
+	Rows         []EnhancedShortageRow `json:"rows"`
+}
+
+// Bulk reservation from requirements
+type StockAllocation struct {
+	LocationCode string `json:"locationCode"`
+	Quantity     int    `json:"quantity"`
+}
+
+type OrderAllocation struct {
+	PurchaseOrderLineID string `json:"purchaseOrderLineId"`
+	PurchaseOrderNumber string `json:"purchaseOrderNumber"`
+	ExpectedArrival     string `json:"expectedArrival"`
+	Quantity            int    `json:"quantity"`
+}
+
+type BulkReservationPreviewRow struct {
+	ItemID             string            `json:"itemId"`
+	ItemNumber         string            `json:"itemNumber"`
+	Manufacturer       string            `json:"manufacturer"`
+	Description        string            `json:"description"`
+	RequiredQuantity   int               `json:"requiredQuantity"`
+	AllocFromStock     int               `json:"allocFromStock"`
+	AllocFromStockLocs []StockAllocation `json:"allocFromStockLocs"`
+	AllocFromOrders    int               `json:"allocFromOrders"`
+	AllocFromOrderLocs []OrderAllocation `json:"allocFromOrderLocs"`
+	Unallocated        int               `json:"unallocated"`
+}
+
+type BulkReservationPreview struct {
+	ScopeID string                      `json:"scopeId"`
+	Rows    []BulkReservationPreviewRow `json:"rows"`
+}
+
+type BulkReservationConfirmInput struct {
+	ScopeID string                      `json:"scopeId"`
+	ActorID string                      `json:"actorId"`
+	Rows    []BulkReservationConfirmRow `json:"rows"`
+}
+
+type BulkReservationConfirmRow struct {
+	ItemID           string            `json:"itemId"`
+	StockAllocations []StockAllocation `json:"stockAllocations"`
+	OrderAllocations []OrderAllocation `json:"orderAllocations"`
+	Purpose          string            `json:"purpose"`
+	Priority         string            `json:"priority"`
+	NeededByAt       string            `json:"neededByAt"`
+}
+
+type BulkReservationResult struct {
+	Created int      `json:"created"`
+	IDs     []string `json:"ids"`
+}
+
+// Arrival calendar
+type ArrivalCalendarItem struct {
+	ItemID              string `json:"itemId"`
+	ItemNumber          string `json:"itemNumber"`
+	Manufacturer        string `json:"manufacturer"`
+	Description         string `json:"description"`
+	Quantity            int    `json:"quantity"`
+	PurchaseOrderNumber string `json:"purchaseOrderNumber"`
+	PurchaseOrderLineID string `json:"purchaseOrderLineId"`
+	QuotationNumber     string `json:"quotationNumber"`
+	SupplierName        string `json:"supplierName"`
+}
+
+type ArrivalCalendarDay struct {
+	Date  string                `json:"date"`
+	Items []ArrivalCalendarItem `json:"items"`
+}
+
+type ArrivalCalendar struct {
+	YearMonth string               `json:"yearMonth"`
+	Days      []ArrivalCalendarDay `json:"days"`
+}
+
+// Item suggest (typeahead)
+type ItemSuggestion struct {
+	ID           string `json:"id"`
+	ItemNumber   string `json:"itemNumber"`
+	Description  string `json:"description"`
+	Manufacturer string `json:"manufacturer"`
+	Category     string `json:"category"`
+}
+
+type ItemSuggestionList struct {
+	Rows []ItemSuggestion `json:"rows"`
+}
+
+type CategorySuggestion struct {
+	Key  string `json:"key"`
+	Name string `json:"name"`
+}
+
+type CategorySuggestionList struct {
+	Rows []CategorySuggestion `json:"rows"`
+}
+
+// Requirements CSV import
+type RequirementsImportPreviewRow struct {
+	RowNumber      int    `json:"rowNumber"`
+	DeviceKey      string `json:"deviceKey"`
+	ScopeKey       string `json:"scopeKey"`
+	ItemNumber     string `json:"itemNumber"`
+	Manufacturer   string `json:"manufacturer"`
+	Description    string `json:"description"`
+	Quantity       int    `json:"quantity"`
+	Status         string `json:"status"`
+	Message        string `json:"message"`
+	ItemID         string `json:"itemId"`
+	ScopeID        string `json:"scopeId"`
+	ItemRegistered bool   `json:"itemRegistered"`
+}
+
+type RequirementsImportPreview struct {
+	FileName string                         `json:"fileName"`
+	Rows     []RequirementsImportPreviewRow `json:"rows"`
+}
+
+type RequirementsImportResult struct {
+	Created int `json:"created"`
+	Updated int `json:"updated"`
+	Skipped int `json:"skipped"`
+	Errored int `json:"errored"`
+}
+
+// Reservation/Requirements CSV export
+type ReservationExportRow struct {
+	Device       string `json:"device"`
+	Scope        string `json:"scope"`
+	Manufacturer string `json:"manufacturer"`
+	ItemNumber   string `json:"itemNumber"`
+	Description  string `json:"description"`
+	Quantity     int    `json:"quantity"`
+	Status       string `json:"status"`
+	Priority     string `json:"priority"`
+	NeededByAt   string `json:"neededByAt"`
+	SourceType   string `json:"sourceType"`
+}
+
+type RequirementExportRow struct {
+	Device       string `json:"device"`
+	Scope        string `json:"scope"`
+	Manufacturer string `json:"manufacturer"`
+	ItemNumber   string `json:"itemNumber"`
+	Description  string `json:"description"`
+	Quantity     int    `json:"quantity"`
+	Note         string `json:"note"`
+}
