@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSWRConfig } from 'swr'
@@ -43,10 +43,15 @@ export function OCRQueuePage() {
   const { data: jobs } = useOCRJobs()
   const { data: masterData } = useMasterData()
   const { data: budgetCategories } = useProcurementBudgetCategories()
+  const uploadInputRef = useRef<HTMLInputElement>(null)
 
   const [selectedIDOverride, setSelectedIDOverride] = useState('')
+  const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null)
+  const [uploadingJob, setUploadingJob] = useState(false)
   const selectedID =
-    jobs?.rows.some((job) => job.id === selectedIDOverride) ? selectedIDOverride : jobs?.rows[0]?.id || selectedIDOverride || 'ocr-001'
+    selectedIDOverride && (!jobs || jobs.rows.some((job) => job.id === selectedIDOverride))
+      ? selectedIDOverride
+      : jobs?.rows[0]?.id || ''
   const { data: detail } = useOCRJobDetail(selectedID)
 
   const [assistByLine, setAssistByLine] = useState<Record<string, OCRLineAssistSuggestion>>({})
@@ -57,6 +62,7 @@ export function OCRQueuePage() {
   const [creatingDraft, setCreatingDraft] = useState(false)
   const [savingReview, setSavingReview] = useState(false)
   const [retryingJob, setRetryingJob] = useState(false)
+  const [uploadError, setUploadError] = useState('')
   const [draftError, setDraftError] = useState('')
   const [reviewError, setReviewError] = useState('')
 
@@ -75,13 +81,42 @@ export function OCRQueuePage() {
     unresolvedLineCount === 0 &&
     unconfirmedLineCount === 0
 
-  async function handleFileUpload(event: ChangeEvent<HTMLInputElement>) {
+  function handleFileSelection(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) {
+      setPendingUploadFile(null)
       return
     }
-    await uploadOCRJob(file)
-    await mutate('ocr-jobs')
+    setUploadError('')
+    setPendingUploadFile(file)
+  }
+
+  function clearPendingUpload() {
+    setPendingUploadFile(null)
+    if (uploadInputRef.current) {
+      uploadInputRef.current.value = ''
+    }
+  }
+
+  async function handleStartOCR() {
+    if (!pendingUploadFile) {
+      return
+    }
+    setUploadingJob(true)
+    setUploadError('')
+    try {
+      const result = await uploadOCRJob(pendingUploadFile)
+      await mutate('ocr-jobs')
+      const nextID = (result as { data?: { id?: string } } | undefined)?.data?.id
+      if (nextID) {
+        setSelectedIDOverride(nextID)
+      }
+      clearPendingUpload()
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Failed to start OCR job')
+    } finally {
+      setUploadingJob(false)
+    }
   }
 
   async function handleAssist(line: OCRResultLine) {
@@ -259,14 +294,35 @@ export function OCRQueuePage() {
             <CardDescription>Uploaded quotation files and their processing status</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="file-upload">Upload quotation PDF or image</Label>
-              <Input
-                id="file-upload"
-                type="file"
-                accept=".pdf,image/*"
-                onChange={handleFileUpload}
-              />
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="file-upload">Upload quotation PDF or image</Label>
+                <Input
+                  id="file-upload"
+                  ref={uploadInputRef}
+                  type="file"
+                  accept=".pdf,image/*"
+                  onChange={handleFileSelection}
+                />
+                <p className="text-sm text-muted-foreground">Select a file first, then start OCR when you are ready.</p>
+              </div>
+              {pendingUploadFile && (
+                <div className="rounded-lg border bg-muted/40 p-3">
+                  <p className="text-sm font-medium">{pendingUploadFile.name}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {pendingUploadFile.type || 'unknown type'} - {(pendingUploadFile.size / 1024).toFixed(1)} KB
+                  </p>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Button onClick={() => void handleStartOCR()} disabled={!pendingUploadFile || uploadingJob}>
+                  {uploadingJob ? 'Starting OCR...' : 'Start OCR'}
+                </Button>
+                <Button variant="outline" onClick={clearPendingUpload} disabled={!pendingUploadFile || uploadingJob}>
+                  Clear Selection
+                </Button>
+              </div>
+              {uploadError && <p className="text-sm text-destructive">{uploadError}</p>}
             </div>
             <div className="border rounded-lg overflow-hidden">
               <Table>
@@ -280,12 +336,12 @@ export function OCRQueuePage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {jobs?.rows.map((job) => (
-                    <TableRow
-                      key={job.id}
-                      onClick={() => setSelectedIDOverride(job.id)}
-                      className={`cursor-pointer ${selectedID === job.id ? 'bg-muted' : ''}`}
-                    >
+                  {jobs?.rows.length ? jobs.rows.map((job) => (
+                      <TableRow
+                        key={job.id}
+                        onClick={() => setSelectedIDOverride(job.id)}
+                        className={`cursor-pointer ${selectedID === job.id ? 'bg-muted' : ''}`}
+                      >
                       <TableCell className="font-medium">{job.fileName}</TableCell>
                       <TableCell>
                         <Badge variant="outline">{job.status}</Badge>
@@ -294,7 +350,13 @@ export function OCRQueuePage() {
                       <TableCell className="text-sm">{job.retryCount}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{job.updatedAt}</TableCell>
                     </TableRow>
-                  ))}
+                  )) : (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-sm text-muted-foreground">
+                        No OCR jobs yet. Select a quotation and start OCR to create the first job.
+                      </TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </div>
