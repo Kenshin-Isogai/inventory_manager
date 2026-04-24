@@ -137,18 +137,10 @@ function App() {
             }
           />
           <Route
-            path="/app/operator/imports/upload"
+            path="/app/operator/items/import"
             element={
               <Suspense fallback={<PageLoader />}>
-                <OperatorImportsPage mode="upload" />
-              </Suspense>
-            }
-          />
-          <Route
-            path="/app/operator/imports/history"
-            element={
-              <Suspense fallback={<PageLoader />}>
-                <OperatorImportsPage mode="history" />
+                <OperatorImportsPage />
               </Suspense>
             }
           />
@@ -285,3 +277,4 @@ function App() {
 }
 
 export default App
+                                                                                                                                                                                                                                                                       

@@ -35,9 +35,7 @@ import {
   Upload,
 } from 'lucide-react'
 
-type OperatorImportsPageProps = {
-  mode?: 'upload' | 'history'
-}
+type PageTab = 'upload' | 'history'
 
 const importTypeMeta: Record<ImportType, { label: string; description: string; headers: string[]; optionalHeaders: string[] }> = {
   items_with_aliases: {
@@ -194,7 +192,8 @@ function RowResultsTable({
   )
 }
 
-export function OperatorImportsPage({ mode = 'upload' }: OperatorImportsPageProps) {
+export function OperatorImportsPage() {
+  const [pageTab, setPageTab] = useState<PageTab>('upload')
   const { data } = useImports()
   const { data: session } = useAuthSession()
   const { mutate } = useSWRConfig()
@@ -389,11 +388,24 @@ export function OperatorImportsPage({ mode = 'upload' }: OperatorImportsPageProp
   return (
     <div className="space-y-6 p-6">
       <div className="space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">Imports</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Item 一括登録</h1>
         <p className="text-muted-foreground">
-          Preview, validate, apply, and audit CSV imports for item and alias master data.
+          CSV からアイテムとエイリアスを一括で登録・管理します。
         </p>
       </div>
+
+      <Tabs value={pageTab} onValueChange={(v) => setPageTab(v as PageTab)}>
+        <TabsList className="grid w-full grid-cols-2 max-w-md">
+          <TabsTrigger value="upload" className="gap-2">
+            <Upload className="h-4 w-4" />
+            Upload
+          </TabsTrigger>
+          <TabsTrigger value="history" className="gap-2">
+            <History className="h-4 w-4" />
+            History
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       {feedback && (
         <div
@@ -407,7 +419,7 @@ export function OperatorImportsPage({ mode = 'upload' }: OperatorImportsPageProp
         </div>
       )}
 
-      {mode === 'upload' && (
+      {pageTab === 'upload' && (
         <>
           <Card className="border-dashed border-2 border-primary/30">
             <CardHeader>
@@ -643,7 +655,8 @@ export function OperatorImportsPage({ mode = 'upload' }: OperatorImportsPageProp
         </>
       )}
 
-      <Card>
+      {pageTab === 'history' && (
+        <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <History className="h-5 w-5" />
@@ -710,6 +723,7 @@ export function OperatorImportsPage({ mode = 'upload' }: OperatorImportsPageProp
           </div>
         </CardContent>
       </Card>
+      )}
 
       <Sheet
         open={detailSheetOpen}
@@ -864,20 +878,4 @@ export function OperatorImportsPage({ mode = 'upload' }: OperatorImportsPageProp
               <span className="font-medium">Status:</span> {undoTarget?.status ?? '—'}
             </p>
             <p>
-              <span className="font-medium">Lifecycle:</span> {undoTarget?.lifecycleState ?? '—'}
-            </p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setUndoDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={() => void handleConfirmUndo()} disabled={!undoTarget || undoingId === undoTarget.id} className="gap-2">
-              {undoingId ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
-              Confirm Undo
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
-}
+              <span className="font-medium">Lifecycle:</span> {undoTarget?.lifecycleSt

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
+import { Upload } from 'lucide-react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { CollapsibleFilterBar } from '../components/CollapsibleFilterBar'
@@ -69,11 +70,17 @@ export function ScopeOverviewPage() {
 
   return (
     <div className="space-y-6 p-6">
-      <div className="space-y-2">
-        <h1 className="text-3xl font-bold">Scope Overview</h1>
-        <p className="text-muted-foreground">
-          Scope tree with requirements, reservations, and shortage summary counts.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-2">
+          <h1 className="text-3xl font-bold">Scope Overview</h1>
+          <p className="text-muted-foreground">
+            Scope tree with requirements, reservations, and shortage summary counts.
+          </p>
+        </div>
+        <Button variant="outline" className="gap-2 shrink-0" onClick={() => navigate('/app/operator/items/import')}>
+          <Upload className="h-4 w-4" />
+          Item 一括登録
+        </Button>
       </div>
 
       <Card>
@@ -169,18 +176,3 @@ export function ScopeOverviewPage() {
                             Reservations
                           </Button>
                           <Button size="sm" variant="outline" onClick={() => navigate(scopedPath('/app/operator/shortage', row))}>
-                            Shortage
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  )
-}

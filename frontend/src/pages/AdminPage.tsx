@@ -1,6 +1,8 @@
 import { useState } from 'react'
-import type { ChangeEvent, FormEvent } from 'react'
+import type { FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useSWRConfig } from 'swr'
+import { Upload } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -18,7 +20,7 @@ import { useBootstrap } from '@/hooks/useBootstrap'
 import { useMasterData } from '@/hooks/useMasterData'
 import { useScopeSystems } from '@/hooks/useScopeSystems'
 import { useProcurementProjects } from '@/hooks/useProcurementProjects'
-import { approveUser, deleteScopeSystem, exportMasterDataCSV, importMasterDataCSV, refreshProcurementProjects, rejectUser, upsertScopeSystem } from '@/lib/mockApi'
+import { approveUser, deleteScopeSystem, exportMasterDataCSV, refreshProcurementProjects, rejectUser, upsertScopeSystem } from '@/lib/mockApi'
 import type { ImportType, RoleKey } from '@/types'
 
 type AdminPageProps = {
@@ -26,6 +28,7 @@ type AdminPageProps = {
 }
 
 export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
+  const navigate = useNavigate()
   const { data } = useBootstrap()
   const { data: masterData } = useMasterData()
   const { data: scopeSystems } = useScopeSystems()
@@ -54,16 +57,6 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
     setMessage(`Exported ${exportType}.csv`)
   }
 
-  async function handleImport(importType: ImportType, event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file) {
-      return
-    }
-    await importMasterDataCSV(importType, file)
-    await Promise.all([mutate('master-data'), mutate('imports')])
-    setMessage(`Imported ${file.name}`)
-    event.target.value = ''
-  }
 
   async function handleProjectRefresh() {
     setRefreshingProjects(true)
@@ -445,15 +438,10 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
                 <CardContent className="space-y-4">
                   <div className="flex gap-2">
                     <Button onClick={() => void handleExport('items_with_aliases')}>Export CSV</Button>
-                    <Label className="flex items-center cursor-pointer">
-                      <Input
-                        type="file"
-                        accept=".csv,text/csv"
-                        onChange={(event) => void handleImport('items_with_aliases', event)}
-                        className="hidden"
-                      />
-                      <Button variant="outline" type="button">Import CSV</Button>
-                    </Label>
+                    <Button variant="outline" className="gap-2" onClick={() => navigate('/app/operator/items/import')}>
+                      <Upload className="h-4 w-4" />
+                      Item 一括登録
+                    </Button>
                   </div>
 
                   {message && <p className="text-sm text-green-600">{message}</p>}
@@ -665,3 +653,4 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
     </div>
   )
 }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
