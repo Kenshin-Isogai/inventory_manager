@@ -29,6 +29,42 @@ func New(cfg config.StorageConfig) (Store, error) {
 	}
 }
 
+func ReadAll(ctx context.Context, path string) ([]byte, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, fmt.Errorf("artifact path is required")
+	}
+	if !strings.HasPrefix(path, "gs://") {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read local artifact: %w", err)
+		}
+		return data, nil
+	}
+
+	bucket, objectKey, err := parseCloudPath("", path)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := gcs.NewClient(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create cloud storage client: %w", err)
+	}
+	defer client.Close()
+
+	reader, err := client.Bucket(bucket).Object(objectKey).NewReader(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("open cloud artifact reader: %w", err)
+	}
+	defer reader.Close()
+
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("read cloud artifact: %w", err)
+	}
+	return data, nil
+}
+
 type LocalStore struct {
 	baseDir string
 }

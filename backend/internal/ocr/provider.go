@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"backend/internal/config"
+	"backend/internal/platform/storage"
 
 	genai "google.golang.org/genai"
 )
@@ -120,7 +120,7 @@ func (p *VertexAIProvider) Name() string {
 }
 
 func (p *VertexAIProvider) Extract(ctx context.Context, artifactPath string, contentType string) (ExtractedDocument, error) {
-	data, err := os.ReadFile(artifactPath)
+	data, err := storage.ReadAll(ctx, artifactPath)
 	if err != nil {
 		return ExtractedDocument{}, fmt.Errorf("read artifact: %w", err)
 	}

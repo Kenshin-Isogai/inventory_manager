@@ -39,6 +39,7 @@ Optional repository variables:
 - `GOOGLE_CLOUD_PROJECT`
 - `VERTEX_AI_LOCATION`
 - `GEMINI_MODEL`
+- `OCR_PROVIDER`
 - `FRONTEND_PUBLIC_URL`
 
 ## Required Secrets
