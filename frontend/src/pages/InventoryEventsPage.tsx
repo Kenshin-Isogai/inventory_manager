@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useSWRConfig } from 'swr'
 import { useInventoryOverview } from '@/hooks/useInventoryOverview'
@@ -33,18 +33,13 @@ export function InventoryEventsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const activeDeviceScopes = deviceScopes?.rows.filter((row) => row.status !== 'inactive') ?? []
-
-  useEffect(() => {
-    if (!deviceScopeId && activeDeviceScopes.length > 0) {
-      setDeviceScopeId(activeDeviceScopes[0].id)
-    }
-  }, [activeDeviceScopes, deviceScopeId])
+  const selectedDeviceScopeId = deviceScopeId || activeDeviceScopes[0]?.id || ''
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setIsSubmitting(true)
     try {
-      await adjustInventory({ itemId, locationCode, quantityDelta, deviceScopeId, note })
+      await adjustInventory({ itemId, locationCode, quantityDelta, deviceScopeId: selectedDeviceScopeId, note })
       await mutate('inventory-overview')
       setMessage(`Recorded adjustment ${quantityDelta} for ${itemId} at ${locationCode}.`)
       // Reset form
@@ -133,7 +128,7 @@ export function InventoryEventsPage() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="device-scope">Device Scope</Label>
-                      <Select value={deviceScopeId} onValueChange={setDeviceScopeId}>
+                      <Select value={selectedDeviceScopeId} onValueChange={setDeviceScopeId}>
                         <SelectTrigger id="device-scope">
                           <SelectValue placeholder="Select a device scope" />
                         </SelectTrigger>
@@ -233,7 +228,7 @@ export function InventoryEventsPage() {
 
                   <div className="space-y-2">
                     <Label htmlFor="receive-device-scope">Device Scope</Label>
-                    <Select value={deviceScopeId} onValueChange={setDeviceScopeId}>
+                    <Select value={selectedDeviceScopeId} onValueChange={setDeviceScopeId}>
                       <SelectTrigger id="receive-device-scope">
                         <SelectValue placeholder="Select a device scope" />
                       </SelectTrigger>

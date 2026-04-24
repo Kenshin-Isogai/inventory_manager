@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useSWRConfig } from 'swr'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -48,24 +48,25 @@ export function OperatorDashboardPage() {
 
   const scopes = deviceScopeData?.rows ?? []
   const devices = deviceData?.rows.filter((row) => row.status !== 'inactive') ?? []
+  const selectedDeviceKey = deviceKey || devices[0]?.deviceKey || ''
 
-  useEffect(() => {
-    if (deviceKey || devices.length === 0) {
+  function resetForm(nextDeviceKey?: string) {
+    setSelectedScopeId(NEW_SCOPE)
+    setDeviceKey(nextDeviceKey ?? devices[0]?.deviceKey ?? '')
+    setScopeKey('')
+    setScopeName('')
+    setScopeType('subsystem')
+    setOwnerDepartmentKey('')
+    setStatus('active')
+  }
+
+  function handleTargetChange(value: string) {
+    setSelectedScopeId(value)
+    if (value === NEW_SCOPE) {
+      resetForm(deviceKey)
       return
     }
-    setDeviceKey(devices[0].deviceKey)
-  }, [deviceKey, devices])
-
-  useEffect(() => {
-    if (selectedScopeId === NEW_SCOPE) {
-      setScopeKey('')
-      setScopeName('')
-      setScopeType('subsystem')
-      setOwnerDepartmentKey('')
-      setStatus('active')
-      return
-    }
-    const selected = scopes.find((row) => row.id === selectedScopeId)
+    const selected = scopes.find((row) => row.id === value)
     if (!selected) {
       return
     }
@@ -75,7 +76,7 @@ export function OperatorDashboardPage() {
     setScopeType(selected.scopeType || 'subsystem')
     setOwnerDepartmentKey(selected.ownerDepartmentKey)
     setStatus(selected.status || 'active')
-  }, [selectedScopeId, scopes])
+  }
 
   async function handleScopeSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -84,7 +85,7 @@ export function OperatorDashboardPage() {
     try {
       await upsertDeviceScope({
         id: selectedScopeId === NEW_SCOPE ? undefined : selectedScopeId,
-        deviceKey,
+        deviceKey: selectedDeviceKey,
         scopeKey,
         scopeName,
         scopeType,
@@ -94,12 +95,7 @@ export function OperatorDashboardPage() {
       await Promise.all([mutate('device-scopes'), mutate('devices')])
       setMessage(selectedScopeId === NEW_SCOPE ? 'Scope created.' : 'Scope updated.')
       if (selectedScopeId === NEW_SCOPE) {
-        setSelectedScopeId(NEW_SCOPE)
-        setScopeKey('')
-        setScopeName('')
-        setOwnerDepartmentKey('')
-        setScopeType('subsystem')
-        setStatus('active')
+        resetForm(selectedDeviceKey)
       }
     } finally {
       setIsSaving(false)
@@ -181,7 +177,7 @@ export function OperatorDashboardPage() {
                     <TableRow
                       key={row.id}
                       className="cursor-pointer"
-                      onClick={() => setSelectedScopeId(row.id)}
+                      onClick={() => handleTargetChange(row.id)}
                     >
                       <TableCell className="font-medium">{row.deviceKey}</TableCell>
                       <TableCell>{row.scopeKey}</TableCell>
@@ -208,7 +204,7 @@ export function OperatorDashboardPage() {
             <form onSubmit={handleScopeSubmit} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="scope-record">Target</Label>
-                <Select value={selectedScopeId} onValueChange={setSelectedScopeId}>
+                <Select value={selectedScopeId} onValueChange={handleTargetChange}>
                   <SelectTrigger id="scope-record">
                     <SelectValue placeholder="Select target scope" />
                   </SelectTrigger>
@@ -225,7 +221,7 @@ export function OperatorDashboardPage() {
 
               <div className="space-y-2">
                 <Label htmlFor="device-key">Device</Label>
-                <Select value={deviceKey} onValueChange={setDeviceKey}>
+                <Select value={selectedDeviceKey} onValueChange={setDeviceKey}>
                   <SelectTrigger id="device-key">
                     <SelectValue placeholder="Select a device" />
                   </SelectTrigger>
@@ -296,14 +292,10 @@ export function OperatorDashboardPage() {
               {message ? <p className="text-sm text-green-700">{message}</p> : null}
 
               <div className="flex gap-2">
-                <Button type="submit" disabled={isSaving || !deviceKey || !scopeKey || !scopeName}>
+                <Button type="submit" disabled={isSaving || !selectedDeviceKey || !scopeKey || !scopeName}>
                   {isSaving ? 'Saving...' : selectedScopeId === NEW_SCOPE ? 'Create Scope' : 'Update Scope'}
                 </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setSelectedScopeId(NEW_SCOPE)}
-                >
+                <Button type="button" variant="outline" onClick={() => resetForm(selectedDeviceKey)}>
                   Reset
                 </Button>
               </div>
