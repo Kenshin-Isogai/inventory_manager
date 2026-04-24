@@ -37,6 +37,10 @@ import type {
 type RegisterDraft = OCRRegisterItemInput
 type ReviewHeaderOverride = Partial<Pick<OCRReviewUpdateInput, 'supplierId' | 'quotationNumber' | 'issueDate'>>
 
+const UNMATCHED_SUPPLIER_VALUE = '__unmatched_supplier__'
+const UNRESOLVED_ITEM_VALUE = '__unresolved_item__'
+const UNASSIGNED_BUDGET_VALUE = '__unassigned_budget__'
+
 export function OCRQueuePage() {
   const navigate = useNavigate()
   const { mutate } = useSWRConfig()
@@ -420,12 +424,15 @@ export function OCRQueuePage() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="supplier">Supplier</Label>
-                  <Select value={currentHeader?.supplierId ?? ''} onValueChange={(value) => updateReviewHeader({ supplierId: value })}>
+                  <Select
+                    value={currentHeader?.supplierId || UNMATCHED_SUPPLIER_VALUE}
+                    onValueChange={(value) => updateReviewHeader({ supplierId: value === UNMATCHED_SUPPLIER_VALUE ? '' : value })}
+                  >
                     <SelectTrigger id="supplier">
                       <SelectValue placeholder="Select supplier" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Unmatched</SelectItem>
+                      <SelectItem value={UNMATCHED_SUPPLIER_VALUE}>Unmatched</SelectItem>
                       {dedupeSuppliers(detail, masterData).map((supplier) => (
                         <SelectItem key={supplier.id} value={supplier.id}>
                           {supplier.name}
@@ -541,12 +548,15 @@ export function OCRQueuePage() {
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label htmlFor={`item-${line.id}`}>Resolved Item</Label>
-                          <Select value={line.itemId} onValueChange={(value) => updateReviewLine(line.id, { itemId: value })}>
+                          <Select
+                            value={line.itemId || UNRESOLVED_ITEM_VALUE}
+                            onValueChange={(value) => updateReviewLine(line.id, { itemId: value === UNRESOLVED_ITEM_VALUE ? '' : value })}
+                          >
                             <SelectTrigger id={`item-${line.id}`}>
                               <SelectValue placeholder="Unresolved" />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="">Unresolved</SelectItem>
+                              <SelectItem value={UNRESOLVED_ITEM_VALUE}>Unresolved</SelectItem>
                               {buildItemOptions(line).map((option) => (
                                 <SelectItem key={option.value || `empty-${line.id}`} value={option.value}>
                                   {option.label}
@@ -576,12 +586,17 @@ export function OCRQueuePage() {
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor={`budget-${line.id}`}>Budget Category</Label>
-                          <Select value={line.budgetCategoryId} onValueChange={(value) => updateReviewLine(line.id, { budgetCategoryId: value })}>
+                          <Select
+                            value={line.budgetCategoryId || UNASSIGNED_BUDGET_VALUE}
+                            onValueChange={(value) =>
+                              updateReviewLine(line.id, { budgetCategoryId: value === UNASSIGNED_BUDGET_VALUE ? '' : value })
+                            }
+                          >
                             <SelectTrigger id={`budget-${line.id}`}>
                               <SelectValue placeholder="Unassigned" />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="">Unassigned</SelectItem>
+                              <SelectItem value={UNASSIGNED_BUDGET_VALUE}>Unassigned</SelectItem>
                               {budgetCategories?.map((category) => (
                                 <SelectItem key={category.id} value={category.id}>
                                   {category.name}
