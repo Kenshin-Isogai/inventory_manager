@@ -1,8 +1,14 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useDeviceScopes } from '@/hooks/useDeviceScopes'
 import { useScopeSystems } from '@/hooks/useScopeSystems'
+import type { DeviceScopeRecord } from '@/types'
 
 const ALL_VALUE = '__all__'
+
+type ScopeTreeRow = {
+  row: DeviceScopeRecord
+  level: number
+}
 
 type DeviceScopeFiltersProps = {
   device: string
@@ -34,13 +40,13 @@ export function DeviceScopeFilters({
   const systemOptions = systemData?.rows.filter((row) => row.status !== 'inactive') ?? []
 
   // Recursive function to build a tree structure for indented display
-  const buildTree = (parentId: string, level: number): { row: any; level: number }[] => {
+  const buildTree = (parentId: string, level: number): ScopeTreeRow[] => {
     const children = activeRows
       .filter((row) => (!device || row.deviceKey === device) && row.parentScopeId === parentId)
       .filter((row) => !system || row.systemKey === system)
       .sort((left, right) => left.scopeName.localeCompare(right.scopeName))
 
-    let results: { row: any; level: number }[] = []
+    let results: ScopeTreeRow[] = []
     for (const child of children) {
       results.push({ row: child, level })
       results = [...results, ...buildTree(child.id, level + 1)]

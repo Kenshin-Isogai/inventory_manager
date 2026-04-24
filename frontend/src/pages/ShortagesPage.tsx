@@ -67,7 +67,7 @@ export function ShortagesPage() {
   const [exportMessage, setExportMessage] = useState('')
   const [isExporting, setIsExporting] = useState(false)
 
-  const scopes = scopeData?.rows ?? []
+  const scopes = useMemo(() => scopeData?.rows ?? [], [scopeData?.rows])
 
   // Helper to get scope breadcrumbs
   const getScopePath = useMemo(() => {

@@ -26,7 +26,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { AlertCircle, ChevronRight, Layers, Package, Box, MapPin, ClipboardList, Info } from 'lucide-react'
 
 const NEW_SCOPE = '__new__'
@@ -63,9 +62,15 @@ export function OperatorDashboardPage() {
   const [message, setMessage] = useState('')
   const [isSaving, setIsSaving] = useState(false)
 
-  const scopes = deviceScopeData?.rows ?? []
-  const devices = deviceData?.rows.filter((row) => row.status !== 'inactive') ?? []
-  const scopeSystems = scopeSystemData?.rows.filter((row) => row.status !== 'inactive') ?? []
+  const scopes = useMemo(() => deviceScopeData?.rows ?? [], [deviceScopeData?.rows])
+  const devices = useMemo(
+    () => deviceData?.rows.filter((row) => row.status !== 'inactive') ?? [],
+    [deviceData?.rows],
+  )
+  const scopeSystems = useMemo(
+    () => scopeSystemData?.rows.filter((row) => row.status !== 'inactive') ?? [],
+    [scopeSystemData?.rows],
+  )
   const selectedDeviceKey = deviceKey || devices[0]?.deviceKey || ''
   const selectedParentScope = scopes.find((row) => row.id === parentScopeId)
   const isSystemScope = scopeType === 'system'
@@ -455,10 +460,16 @@ export function OperatorDashboardPage() {
               </div>
 
               {message ? (
-                <Alert variant={message.startsWith('Error') ? 'destructive' : 'default'} className="py-2">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription className="text-xs">{message}</AlertDescription>
-                </Alert>
+                <div
+                  className={`flex items-start gap-2 rounded-md border px-3 py-2 text-xs ${
+                    message.startsWith('Error')
+                      ? 'border-destructive/30 bg-destructive/10 text-destructive'
+                      : 'border-primary/20 bg-primary/5 text-foreground'
+                  }`}
+                >
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <p>{message}</p>
+                </div>
               ) : null}
 
               <div className="flex gap-2 pt-2">

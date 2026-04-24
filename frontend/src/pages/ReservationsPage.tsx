@@ -54,7 +54,7 @@ export function ReservationsPage() {
   const { data } = useReservations(device, scope)
   const { data: scopeData } = useDeviceScopes()
 
-  const scopes = scopeData?.rows ?? []
+  const scopes = useMemo(() => scopeData?.rows ?? [], [scopeData?.rows])
 
   // Helper to get scope breadcrumbs
   const getScopePath = useMemo(() => {
