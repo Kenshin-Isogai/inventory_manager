@@ -2,9 +2,9 @@ import useSWR from 'swr'
 
 import { fetchOCRJobs } from '../lib/mockApi'
 
-export function useOCRJobs(createdBy?: string) {
+export function useOCRJobs(createdBy?: string, enabled = true) {
   return useSWR(
-    createdBy ? ['ocr-jobs', createdBy] : 'ocr-jobs',
+    enabled ? (createdBy ? ['ocr-jobs', createdBy] : 'ocr-jobs') : null,
     () => fetchOCRJobs(createdBy),
   )
 }

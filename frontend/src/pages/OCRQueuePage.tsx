@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSWRConfig } from 'swr'
+import { Loader2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -46,12 +47,14 @@ const UNASSIGNED_BUDGET_VALUE = '__unassigned_budget__'
 export function OCRQueuePage() {
   const navigate = useNavigate()
   const { mutate } = useSWRConfig()
-  const { data: session } = useAuthSession()
+  const { data: session, isLoading: sessionLoading } = useAuthSession()
   const [filterMyJobs, setFilterMyJobs] = useState(true)
   const currentUserId = session?.user?.userId ?? ''
-  const { data: jobs } = useOCRJobs(filterMyJobs ? currentUserId : undefined)
-  const { data: masterData } = useMasterData()
-  const { data: budgetCategories } = useProcurementBudgetCategories()
+  const sessionReady = !!session?.authenticated && session.user.status === 'active'
+  const jobsReady = sessionReady && (!filterMyJobs || currentUserId !== '')
+  const { data: jobs } = useOCRJobs(filterMyJobs ? currentUserId : undefined, jobsReady)
+  const { data: masterData } = useMasterData(sessionReady)
+  const { data: budgetCategories } = useProcurementBudgetCategories(undefined, sessionReady)
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const jobRows = jobs?.rows ?? []
 
@@ -62,7 +65,7 @@ export function OCRQueuePage() {
     selectedIDOverride && jobRows.some((job) => job.id === selectedIDOverride)
       ? selectedIDOverride
       : jobRows[0]?.id || ''
-  const { data: detail } = useOCRJobDetail(selectedID)
+  const { data: detail } = useOCRJobDetail(selectedID, sessionReady)
   const supplierMatches = detail?.supplierMatch ?? []
 
   const [assistByLine, setAssistByLine] = useState<Record<string, OCRLineAssistSuggestion>>({})
@@ -77,6 +80,17 @@ export function OCRQueuePage() {
   const [draftError, setDraftError] = useState('')
   const [reviewError, setReviewError] = useState('')
   const [deletingJobId, setDeletingJobId] = useState('')
+  const [ocrElapsedSec, setOcrElapsedSec] = useState(0)
+
+  // Elapsed-time counter while OCR is running
+  useEffect(() => {
+    if (!uploadingJob) {
+      setOcrElapsedSec(0)
+      return
+    }
+    const t = setInterval(() => setOcrElapsedSec((s) => s + 1), 1000)
+    return () => clearInterval(t)
+  }, [uploadingJob])
 
   const currentHeader = detail ? getReviewHeader(detail, reviewHeaderByJob[selectedID]) : null
   const currentLines = detail ? (detail.lines ?? []).map((line) => getReviewLine(line, reviewLinesByJob[selectedID]?.[line.id])) : []
@@ -318,6 +332,24 @@ export function OCRQueuePage() {
     })
   }
 
+  if (sessionLoading || !sessionReady) {
+    return (
+      <div className="p-6 space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">OCR Queue</h1>
+          <p className="text-muted-foreground mt-1">Upload and review quotations for OCR extraction</p>
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Preparing session</CardTitle>
+            <CardDescription>Waiting for your authenticated session before loading OCR data.</CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
+    )
+  }
+
   return (
     <div className="p-6 space-y-6">
       <div>
@@ -354,12 +386,22 @@ export function OCRQueuePage() {
               )}
               <div className="flex gap-2">
                 <Button onClick={() => void handleStartOCR()} disabled={!pendingUploadFile || uploadingJob}>
-                  {uploadingJob ? 'Starting OCR...' : 'Start OCR'}
+                  {uploadingJob && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {uploadingJob ? 'OCR Processing...' : 'Start OCR'}
                 </Button>
                 <Button variant="outline" onClick={clearPendingUpload} disabled={!pendingUploadFile || uploadingJob}>
                   Clear Selection
                 </Button>
               </div>
+              {uploadingJob && (
+                <div className="flex items-center gap-3 rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  <div>
+                    <p className="font-medium text-foreground">LLMでOCR解析中...</p>
+                    <p>ドキュメントの内容を読み取っています。通常10〜30秒ほどかかります。（{ocrElapsedSec}秒経過）</p>
+                  </div>
+                </div>
+              )}
               {uploadError && <p className="text-sm text-destructive">{uploadError}</p>}
             </div>
             <div className="flex items-center gap-2 mb-2">
@@ -524,6 +566,7 @@ export function OCRQueuePage() {
                 onClick={() => void handleSaveReview()}
                 disabled={!hasReviewOverrides || savingReview}
               >
+                {savingReview && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {savingReview ? 'Saving...' : 'Save Review'}
               </Button>
               <Button
@@ -531,12 +574,14 @@ export function OCRQueuePage() {
                 onClick={handleRetry}
                 disabled={retryingJob || detail.status === 'processing'}
               >
+                {retryingJob && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {retryingJob ? 'Retrying...' : 'Retry OCR'}
               </Button>
               <Button
                 onClick={handleDraftAction}
                 disabled={creatingDraft || (!detail.procurementRequestId && !canCreateDraft)}
               >
+                {creatingDraft && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {creatingDraft ? 'Creating...' : detail.procurementRequestId ? 'Open Procurement Draft' : 'Create Procurement Draft'}
               </Button>
             </div>
@@ -683,7 +728,8 @@ export function OCRQueuePage() {
                           disabled={busyLineId === line.id}
                           className="w-full"
                         >
-                          {busyLineId === line.id ? 'Working...' : 'LLM Assist'}
+                          {busyLineId === line.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                          {busyLineId === line.id ? 'LLM 解析中...' : 'LLM Assist'}
                         </Button>
                         {assist && (
                           <p className="text-sm text-muted-foreground mt-2">
