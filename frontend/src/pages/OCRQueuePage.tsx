@@ -44,15 +44,17 @@ export function OCRQueuePage() {
   const { data: masterData } = useMasterData()
   const { data: budgetCategories } = useProcurementBudgetCategories()
   const uploadInputRef = useRef<HTMLInputElement>(null)
+  const jobRows = jobs?.rows ?? []
 
   const [selectedIDOverride, setSelectedIDOverride] = useState('')
   const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null)
   const [uploadingJob, setUploadingJob] = useState(false)
   const selectedID =
-    selectedIDOverride && (!jobs || jobs.rows.some((job) => job.id === selectedIDOverride))
+    selectedIDOverride && jobRows.some((job) => job.id === selectedIDOverride)
       ? selectedIDOverride
-      : jobs?.rows[0]?.id || ''
+      : jobRows[0]?.id || ''
   const { data: detail } = useOCRJobDetail(selectedID)
+  const supplierMatches = detail?.supplierMatch ?? []
 
   const [assistByLine, setAssistByLine] = useState<Record<string, OCRLineAssistSuggestion>>({})
   const [draftByLine, setDraftByLine] = useState<Record<string, RegisterDraft>>({})
@@ -67,7 +69,7 @@ export function OCRQueuePage() {
   const [reviewError, setReviewError] = useState('')
 
   const currentHeader = detail ? getReviewHeader(detail, reviewHeaderByJob[selectedID]) : null
-  const currentLines = detail ? detail.lines.map((line) => getReviewLine(line, reviewLinesByJob[selectedID]?.[line.id])) : []
+  const currentLines = detail ? (detail.lines ?? []).map((line) => getReviewLine(line, reviewLinesByJob[selectedID]?.[line.id])) : []
   const hasReviewOverrides =
     !!reviewHeaderByJob[selectedID] || Object.keys(reviewLinesByJob[selectedID] ?? {}).length > 0
   const unresolvedLineCount = currentLines.filter((line) => !line.itemId).length
@@ -336,7 +338,7 @@ export function OCRQueuePage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {jobs?.rows.length ? jobs.rows.map((job) => (
+                  {jobRows.length ? jobRows.map((job) => (
                       <TableRow
                         key={job.id}
                         onClick={() => setSelectedIDOverride(job.id)}
@@ -396,8 +398,8 @@ export function OCRQueuePage() {
               <div>
                 <p className="text-sm text-muted-foreground">Supplier (Matched)</p>
                 <p className="font-medium">
-                  {detail.supplierMatch?.[0]
-                    ? `${detail.supplierMatch[0].name} (${Math.round(detail.supplierMatch[0].score * 100)}%)`
+                  {supplierMatches[0]
+                    ? `${supplierMatches[0].name} (${Math.round(supplierMatches[0].score * 100)}%)`
                     : detail.supplierId || '-'}
                 </p>
               </div>
@@ -735,6 +737,7 @@ function getReviewHeader(detail: OCRJobDetailResponse, override?: ReviewHeaderOv
 function getReviewLine(line: OCRResultLine, override?: Partial<OCRLineUpdate>): OCRResultLine {
   return {
     ...line,
+    matchCandidates: line.matchCandidates ?? [],
     itemId: override?.itemId ?? line.itemId,
     deliveryLocation: override?.deliveryLocation ?? line.deliveryLocation,
     budgetCategoryId: override?.budgetCategoryId ?? line.budgetCategoryId,
