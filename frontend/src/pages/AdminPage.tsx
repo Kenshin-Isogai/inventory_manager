@@ -13,11 +13,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Separator } from '@/components/ui/separator'
+import { MasterItemAliasDialog } from '@/components/MasterItemAliasDialog'
 
 import { useRoles } from '@/hooks/useRoles'
 import { useUsers } from '@/hooks/useUsers'
 import { useBootstrap } from '@/hooks/useBootstrap'
 import { useMasterData } from '@/hooks/useMasterData'
+import { useMasterItems } from '@/hooks/useMasterItems'
 import { useScopeSystems } from '@/hooks/useScopeSystems'
 import { useProcurementProjects } from '@/hooks/useProcurementProjects'
 import { approveUser, deleteScopeSystem, exportMasterDataCSV, refreshProcurementProjects, rejectUser, upsertScopeSystem } from '@/lib/mockApi'
@@ -31,12 +33,14 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
   const navigate = useNavigate()
   const { data } = useBootstrap()
   const { data: masterData } = useMasterData()
+  const { data: masterItems } = useMasterItems()
   const { data: scopeSystems } = useScopeSystems()
   const { data: projects } = useProcurementProjects()
   const { data: users } = useUsers()
   const { data: roles } = useRoles()
   const { mutate } = useSWRConfig()
   const [message, setMessage] = useState('')
+  const [masterDialog, setMasterDialog] = useState<'item-with-alias' | 'alias-only' | null>(null)
   const [refreshingProjects, setRefreshingProjects] = useState(false)
   const [pendingRoles, setPendingRoles] = useState<Record<string, RoleKey[]>>({})
   const [systemKey, setSystemKey] = useState('')
@@ -437,6 +441,9 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex gap-2">
+                    <Button className="gap-2" onClick={() => setMasterDialog('item-with-alias')}>
+                      Item 登録
+                    </Button>
                     <Button onClick={() => void handleExport('items_with_aliases')}>Export CSV</Button>
                     <Button variant="outline" className="gap-2" onClick={() => navigate('/app/operator/items/import')}>
                       <Upload className="h-4 w-4" />
@@ -526,7 +533,12 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
             <TabsContent value="aliases">
               <Card>
                 <CardHeader>
-                  <CardTitle>Supplier Aliases</CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle>Supplier Aliases</CardTitle>
+                    <Button className="gap-2" onClick={() => setMasterDialog('alias-only')}>
+                      Alias 登録
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent>
                   {message && <p className="text-sm text-green-600">{message}</p>}
@@ -650,6 +662,15 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
           </Tabs>
         </TabsContent>
       </Tabs>
+
+      <MasterItemAliasDialog
+        open={masterDialog !== null}
+        mode={masterDialog ?? 'item-with-alias'}
+        masterData={masterData}
+        masterItems={masterItems?.rows ?? []}
+        onOpenChange={(open) => !open && setMasterDialog(null)}
+        onCompleted={() => setMessage('Master data saved')}
+      />
     </div>
   )
 }

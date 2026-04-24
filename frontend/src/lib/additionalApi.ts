@@ -15,6 +15,9 @@ import type {
   RequirementsImportResult,
   MasterItemCreateInput,
   MasterItemRecord,
+  MasterItemListResponse,
+  AliasUpsertInput,
+  SupplierAliasSummary,
 } from '../types'
 import { config } from './config'
 import { authorizationHeaders } from './auth'
@@ -89,6 +92,14 @@ export async function fetchCategorySuggest(query: string): Promise<CategorySugge
 
 export async function createMasterItem(input: MasterItemCreateInput): Promise<MasterItemRecord> {
   return postAPI<MasterItemRecord>('/api/v1/admin/master-data/items', input)
+}
+
+export async function fetchMasterItems(): Promise<MasterItemListResponse> {
+  return fetchAPI<MasterItemListResponse>('/api/v1/admin/master-data/items')
+}
+
+export async function upsertMasterAlias(input: AliasUpsertInput): Promise<SupplierAliasSummary> {
+  return postAPI<SupplierAliasSummary>('/api/v1/admin/master-data/aliases', input)
 }
 
 export async function fetchBulkReservationPreview(scopeId: string): Promise<BulkReservationPreviewResponse> {

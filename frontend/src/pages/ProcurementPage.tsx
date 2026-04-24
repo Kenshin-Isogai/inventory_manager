@@ -16,6 +16,10 @@ import { useAuthSession } from '@/hooks/useAuthSession'
 import { useProcurementBudgetCategories } from '@/hooks/useProcurementBudgetCategories'
 import { useProcurementProjects } from '@/hooks/useProcurementProjects'
 import { useProcurementRequests } from '@/hooks/useProcurementRequests'
+import { useMasterData } from '@/hooks/useMasterData'
+import { useMasterItems } from '@/hooks/useMasterItems'
+import { ItemCombobox } from '@/components/ui/item-combobox'
+import { MasterItemAliasDialog } from '@/components/MasterItemAliasDialog'
 import { resolveActorId } from '@/lib/auth'
 import {
   createProcurementRequest,
@@ -29,9 +33,17 @@ export function ProcurementPage() {
   const { data: session } = useAuthSession()
   const { data: requests } = useProcurementRequests()
   const { data: projects } = useProcurementProjects()
+  const { data: masterData } = useMasterData()
+  const { data: masterItems } = useMasterItems()
   const actorId = resolveActorId(session)
 
   const [title, setTitle] = useState('New shortage follow-up')
+  const [itemId, setItemId] = useState('item-er2')
+  const [requestedQuantity, setRequestedQuantity] = useState(4)
+  const [deliveryLocation, setDeliveryLocation] = useState('Tokyo Assembly')
+  const [accountingCategory, setAccountingCategory] = useState('parts')
+  const [lineNote, setLineNote] = useState('Created from Procurement page form')
+  const [supplierId, setSupplierId] = useState('sup-misumi')
   const [projectId, setProjectId] = useState('proj-er2-upgrade')
   const [budgetCategoryId, setBudgetCategoryId] = useState('budget-er2-material')
   const { data: budgetCategories } = useProcurementBudgetCategories(projectId)
@@ -42,6 +54,15 @@ export function ProcurementPage() {
   const [refreshingBudgets, setRefreshingBudgets] = useState(false)
   const [submitError, setSubmitError] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [masterDialogOpen, setMasterDialogOpen] = useState(false)
+
+  const itemOptions = (masterItems?.rows ?? []).map((item) => ({
+    itemId: item.id,
+    itemNumber: item.itemNumber,
+    description: item.description,
+    manufacturer: item.manufacturerKey,
+    category: item.categoryKey,
+  }))
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -52,18 +73,18 @@ export function ProcurementPage() {
         title,
         projectId,
         budgetCategoryId: selectedBudgetCategoryId,
-        supplierId: 'sup-misumi',
+        supplierId,
         quotationId: 'quote-001',
         sourceType: 'manual',
         createdBy: actorId,
         lines: [
           {
-            itemId: 'item-er2',
+            itemId,
             quotationLineId: 'quote-line-001',
-            requestedQuantity: 4,
-            deliveryLocation: 'Tokyo Assembly',
-            accountingCategory: 'parts',
-            note: 'Created from Procurement page form',
+            requestedQuantity,
+            deliveryLocation,
+            accountingCategory,
+            note: lineNote,
           },
         ],
       })
@@ -139,7 +160,7 @@ export function ProcurementPage() {
             <DialogTrigger asChild>
               <Button>Create Request</Button>
             </DialogTrigger>
-            <DialogContent className="max-w-md">
+            <DialogContent className="max-w-2xl">
               <DialogHeader>
                 <DialogTitle>Create Procurement Request</DialogTitle>
                 <DialogDescription>Create a new procurement request with project and budget details.</DialogDescription>
@@ -153,6 +174,21 @@ export function ProcurementPage() {
                     onChange={(event) => setTitle(event.target.value)}
                     placeholder="Request title"
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="supplier">Supplier</Label>
+                  <Select value={supplierId} onValueChange={setSupplierId}>
+                    <SelectTrigger id="supplier">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {masterData?.suppliers.map((supplier) => (
+                        <SelectItem key={supplier.id} value={supplier.id}>
+                          {supplier.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="project">Project</Label>
@@ -186,6 +222,44 @@ export function ProcurementPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="rounded-md border p-3 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <Label>Request Line</Label>
+                    <Button type="button" variant="outline" size="sm" onClick={() => setMasterDialogOpen(true)}>
+                      Register Item/Alias
+                    </Button>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-[1fr_120px]">
+                    <div className="space-y-2">
+                      <Label>Item</Label>
+                      <ItemCombobox
+                        items={itemOptions}
+                        value={itemId}
+                        onValueChange={setItemId}
+                        onCreateNew={() => setMasterDialogOpen(true)}
+                        placeholder="Select item"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="requested-quantity">Quantity</Label>
+                      <Input id="requested-quantity" type="number" min={1} value={requestedQuantity} onChange={(event) => setRequestedQuantity(Math.max(1, Number(event.target.value) || 1))} />
+                    </div>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="delivery-location">Delivery Location</Label>
+                      <Input id="delivery-location" value={deliveryLocation} onChange={(event) => setDeliveryLocation(event.target.value)} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="accounting-category">Accounting Category</Label>
+                      <Input id="accounting-category" value={accountingCategory} onChange={(event) => setAccountingCategory(event.target.value)} />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="line-note">Line Note</Label>
+                    <Input id="line-note" value={lineNote} onChange={(event) => setLineNote(event.target.value)} />
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <Button type="button" variant="outline" onClick={handleRefreshProjects} disabled={refreshingProjects} className="w-full">
@@ -242,6 +316,18 @@ export function ProcurementPage() {
           </div>
         </CardContent>
       </Card>
+      <MasterItemAliasDialog
+        open={masterDialogOpen}
+        masterData={masterData}
+        masterItems={masterItems?.rows ?? []}
+        initialSupplierId={supplierId}
+        onOpenChange={setMasterDialogOpen}
+        onCompleted={(result) => {
+          if (result.item?.id) {
+            setItemId(result.item.id)
+          }
+        }}
+      />
     </div>
   )
 }

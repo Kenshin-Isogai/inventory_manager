@@ -313,6 +313,63 @@ export type InventoryOverviewResponse = {
   balances: InventoryBalance[]
 }
 
+export type InventoryItemSummary = {
+  itemId: string
+  itemNumber: string
+  description: string
+  manufacturer: string
+  category: string
+  onHandQuantity: number
+  reservedQuantity: number
+  availableQuantity: number
+}
+
+export type InventoryItemListResponse = {
+  rows: InventoryItemSummary[]
+}
+
+export type LocationSummary = {
+  code: string
+  name: string
+  locationType: string
+  isActive: boolean
+  onHandQuantity: number
+  reservedQuantity: number
+  availableQuantity: number
+}
+
+export type LocationListResponse = {
+  rows: LocationSummary[]
+}
+
+export type LocationUpsertInput = {
+  code: string
+  name: string
+  locationType: string
+  isActive: boolean
+}
+
+export type InventoryEventEntry = {
+  id: string
+  eventType: string
+  itemId: string
+  itemNumber: string
+  fromLocationCode: string
+  toLocationCode: string
+  quantityDelta: number
+  actorId: string
+  sourceType: string
+  sourceId: string
+  correlationId: string
+  reversedByEventId: string
+  note: string
+  occurredAt: string
+}
+
+export type InventoryEventListResponse = {
+  rows: InventoryEventEntry[]
+}
+
 export type ShortageRow = {
   device: string
   scope: string
@@ -409,6 +466,14 @@ export type SupplierAliasSummary = {
   supplierName: string
   itemId: string
   canonicalItemNumber: string
+  supplierItemNumber: string
+  unitsPerOrder: number
+}
+
+export type AliasUpsertInput = {
+  id?: string
+  itemId: string
+  supplierId: string
   supplierItemNumber: string
   unitsPerOrder: number
 }
@@ -918,11 +983,14 @@ export type RequirementsImportResult = {
 }
 
 export type MasterItemCreateInput = {
+  id?: string
   itemNumber: string
   description: string
   manufacturerKey: string
   categoryKey: string
+  defaultSupplierId?: string
   note?: string
+  lifecycleStatus?: string
 }
 
 export type MasterItemRecord = {
@@ -934,4 +1002,8 @@ export type MasterItemRecord = {
   defaultSupplierId: string
   note: string
   lifecycleStatus: string
+}
+
+export type MasterItemListResponse = {
+  rows: MasterItemRecord[]
 }

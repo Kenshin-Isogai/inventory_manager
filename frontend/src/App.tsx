@@ -27,7 +27,7 @@ const InventoryItemsPage = lazy(() =>
   import('./pages/InventoryPage').then((m) => ({ default: m.InventoryPage }))
 )
 const InventoryLocationsPage = lazy(() =>
-  import('./pages/InventoryPage').then((m) => ({ default: m.InventoryPage }))
+  import('./pages/InventoryLocationsPage').then((m) => ({ default: m.InventoryLocationsPage }))
 )
 const InventoryEventsPage = lazy(() =>
   import('./pages/InventoryEventsPage').then((m) => ({ default: m.InventoryEventsPage }))

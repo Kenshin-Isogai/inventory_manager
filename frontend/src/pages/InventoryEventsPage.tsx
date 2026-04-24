@@ -14,6 +14,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuthSession } from '@/hooks/useAuthSession'
 import { useDeviceScopes } from '@/hooks/useDeviceScopes'
+import { useInventoryEvents } from '@/hooks/useInventoryEvents'
+import { useInventoryLocations } from '@/hooks/useInventoryLocations'
 import { useInventoryOverview } from '@/hooks/useInventoryOverview'
 import { resolveActorId } from '@/lib/auth'
 import { applyInventoryOperationImport, previewInventoryOperationImport } from '@/lib/additionalApi'
@@ -31,6 +33,8 @@ type Operation = 'adjust' | 'receive' | 'move'
 
 export function InventoryEventsPage() {
   const { data } = useInventoryOverview()
+  const { data: locationsData } = useInventoryLocations()
+  const { data: eventsData } = useInventoryEvents()
   const { data: deviceScopes } = useDeviceScopes()
   const { data: session } = useAuthSession()
   const { mutate } = useSWRConfig()
@@ -55,6 +59,7 @@ export function InventoryEventsPage() {
   const [recentResults, setRecentResults] = useState<{ operation: string; count: number; at: string }[]>([])
 
   const activeDeviceScopes = deviceScopes?.rows.filter((row) => row.status !== 'inactive') ?? []
+  const activeLocations = locationsData?.rows.filter((row) => row.isActive) ?? []
   const selectedDeviceScopeId = deviceScopeId || activeDeviceScopes[0]?.id || ''
   const actorId = resolveActorId(session)
   const items = useMemo(() => {
@@ -65,7 +70,7 @@ export function InventoryEventsPage() {
   const csvInvalidRows = (csvPreview?.rows ?? []).filter((row) => row.status === 'invalid')
 
   async function afterOperation(operationName: string, count: number) {
-    await mutate('inventory-overview')
+    await Promise.all([mutate('inventory-overview'), mutate('inventory-items'), mutate('inventory-locations'), mutate('inventory-events')])
     setRecentResults((current) => [{ operation: operationName, count, at: new Date().toLocaleString() }, ...current].slice(0, 8))
   }
 
@@ -179,6 +184,19 @@ export function InventoryEventsPage() {
     )
   }
 
+  function renderLocationSelect(id: string, value: string, onValueChange: (value: string) => void, placeholder: string) {
+    return (
+      <Select value={value} onValueChange={onValueChange}>
+        <SelectTrigger id={id}><SelectValue placeholder={placeholder} /></SelectTrigger>
+        <SelectContent>
+          {activeLocations.map((row) => (
+            <SelectItem key={row.code} value={row.code}>{row.code} / {row.name}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    )
+  }
+
   return (
     <div className="space-y-6 p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -227,7 +245,7 @@ export function InventoryEventsPage() {
                   </div>
                 )}
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2"><Label htmlFor="adjust-location">Location</Label><Input id="adjust-location" value={locationCode} onChange={(event) => setLocationCode(event.target.value)} /></div>
+                  <div className="space-y-2"><Label htmlFor="adjust-location">Location</Label>{renderLocationSelect('adjust-location', locationCode, setLocationCode, 'Select location')}</div>
                   <div className="space-y-2"><Label htmlFor="adjust-qty">Quantity Delta</Label><Input id="adjust-qty" type="number" value={quantityDelta} onChange={(event) => setQuantityDelta(Number(event.target.value) || 0)} /></div>
                 </div>
                 <div className="space-y-2"><Label htmlFor="adjust-note">Note</Label><Input id="adjust-note" value={note} onChange={(event) => setNote(event.target.value)} /></div>
@@ -247,7 +265,7 @@ export function InventoryEventsPage() {
               <form onSubmit={handleReceiveSubmit} className="space-y-5">
                 {renderCommonFields()}
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2"><Label htmlFor="receive-location">Location</Label><Input id="receive-location" value={locationCode} onChange={(event) => setLocationCode(event.target.value)} /></div>
+                  <div className="space-y-2"><Label htmlFor="receive-location">Location</Label>{renderLocationSelect('receive-location', locationCode, setLocationCode, 'Select location')}</div>
                   <div className="space-y-2"><Label htmlFor="receive-qty">Quantity</Label><Input id="receive-qty" type="number" min={1} value={quantity} onChange={(event) => setQuantity(Math.max(1, Number(event.target.value) || 1))} /></div>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
@@ -271,8 +289,8 @@ export function InventoryEventsPage() {
               <form onSubmit={handleMoveSubmit} className="space-y-5">
                 {renderCommonFields()}
                 <div className="grid gap-4 sm:grid-cols-3">
-                  <div className="space-y-2"><Label htmlFor="from-location">From</Label><Input id="from-location" value={locationCode} onChange={(event) => setLocationCode(event.target.value)} /></div>
-                  <div className="space-y-2"><Label htmlFor="to-location">To</Label><Input id="to-location" value={toLocationCode} onChange={(event) => setToLocationCode(event.target.value)} /></div>
+                  <div className="space-y-2"><Label htmlFor="from-location">From</Label>{renderLocationSelect('from-location', locationCode, setLocationCode, 'From location')}</div>
+                  <div className="space-y-2"><Label htmlFor="to-location">To</Label>{renderLocationSelect('to-location', toLocationCode, setToLocationCode, 'To location')}</div>
                   <div className="space-y-2"><Label htmlFor="move-qty">Quantity</Label><Input id="move-qty" type="number" min={1} value={quantity} onChange={(event) => setQuantity(Math.max(1, Number(event.target.value) || 1))} /></div>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
@@ -334,23 +352,31 @@ export function InventoryEventsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Recent Event Results</CardTitle>
-          <CardDescription>Operations submitted from this screen.</CardDescription>
+          <CardTitle>Inventory Event History</CardTitle>
+          <CardDescription>Latest recorded receive, move, and adjustment events.</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
-            <TableHeader><TableRow><TableHead>Operation</TableHead><TableHead className="text-right">Rows</TableHead><TableHead>Submitted</TableHead></TableRow></TableHeader>
+            <TableHeader><TableRow><TableHead>Event</TableHead><TableHead>Item</TableHead><TableHead>Location</TableHead><TableHead className="text-right">Delta</TableHead><TableHead>Source</TableHead><TableHead>Occurred</TableHead></TableRow></TableHeader>
             <TableBody>
-              {recentResults.map((row, index) => (
-                <TableRow key={`${row.operation}-${row.at}-${index}`}>
-                  <TableCell><Badge variant="outline">{row.operation}</Badge></TableCell>
-                  <TableCell className="text-right">{row.count}</TableCell>
-                  <TableCell>{row.at}</TableCell>
+              {(eventsData?.rows ?? []).map((row) => (
+                <TableRow key={row.id}>
+                  <TableCell><Badge variant="outline">{row.eventType}</Badge></TableCell>
+                  <TableCell>{row.itemNumber}</TableCell>
+                  <TableCell>{row.fromLocationCode && row.toLocationCode ? `${row.fromLocationCode} -> ${row.toLocationCode}` : row.toLocationCode || row.fromLocationCode}</TableCell>
+                  <TableCell className={`text-right ${row.quantityDelta < 0 ? 'text-destructive' : ''}`}>{row.quantityDelta}</TableCell>
+                  <TableCell>{row.sourceType}{row.sourceId ? ` / ${row.sourceId}` : ''}</TableCell>
+                  <TableCell>{row.occurredAt ? new Date(row.occurredAt).toLocaleString() : ''}</TableCell>
                 </TableRow>
               ))}
-              {recentResults.length === 0 && <TableRow><TableCell colSpan={3} className="py-8 text-center text-muted-foreground">No operations submitted yet.</TableCell></TableRow>}
+              {(eventsData?.rows ?? []).length === 0 && <TableRow><TableCell colSpan={6} className="py-8 text-center text-muted-foreground">No inventory events recorded yet.</TableCell></TableRow>}
             </TableBody>
           </Table>
+          {recentResults.length > 0 && (
+            <div className="mt-4 rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
+              Last submitted from this screen: {recentResults[0].operation}, {recentResults[0].count} row(s), {recentResults[0].at}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

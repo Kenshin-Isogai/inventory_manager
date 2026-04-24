@@ -10,6 +10,10 @@ import type {
   ImportPreviewRow,
   ImportType,
   InventoryAdjustInput,
+  InventoryEventListResponse,
+  InventoryItemListResponse,
+  LocationListResponse,
+  LocationUpsertInput,
   InventoryMoveInput,
   InventoryOverviewResponse,
   InventoryReceiveInput,
@@ -352,6 +356,75 @@ const inventoryOverview: InventoryOverviewResponse = {
       onHandQuantity: 20,
       reservedQuantity: 0,
       availableQuantity: 20,
+    },
+  ],
+}
+
+const inventoryLocations: LocationListResponse = {
+  rows: [
+    {
+      code: 'TOKYO-A1',
+      name: 'Tokyo Assembly A1',
+      locationType: 'warehouse',
+      isActive: true,
+      onHandQuantity: 9,
+      reservedQuantity: 12,
+      availableQuantity: -3,
+    },
+    {
+      code: 'TOKYO-C1',
+      name: 'Tokyo Cabinet C1',
+      locationType: 'warehouse',
+      isActive: true,
+      onHandQuantity: 20,
+      reservedQuantity: 0,
+      availableQuantity: 20,
+    },
+    {
+      code: 'TOKYO-B1',
+      name: 'Tokyo Buffer B1',
+      locationType: 'staging',
+      isActive: true,
+      onHandQuantity: 0,
+      reservedQuantity: 0,
+      availableQuantity: 0,
+    },
+  ],
+}
+
+const inventoryEvents: InventoryEventListResponse = {
+  rows: [
+    {
+      id: 'evt-001',
+      eventType: 'adjust',
+      itemId: 'item-er2',
+      itemNumber: 'ER2',
+      fromLocationCode: '',
+      toLocationCode: 'TOKYO-A1',
+      quantityDelta: -2,
+      actorId: 'local-user',
+      sourceType: 'manual',
+      sourceId: '',
+      correlationId: '',
+      reversedByEventId: '',
+      note: 'Stock correction',
+      occurredAt: '2026-04-23T08:00:00Z',
+    },
+    {
+      id: 'evt-002',
+      eventType: 'receive',
+      itemId: 'item-cn88',
+      itemNumber: 'CN-88',
+      fromLocationCode: '',
+      toLocationCode: 'TOKYO-C1',
+      quantityDelta: 20,
+      actorId: 'local-user',
+      sourceType: 'manual',
+      sourceId: 'PO-001',
+      correlationId: '',
+      reversedByEventId: '',
+      note: 'Initial receipt',
+      occurredAt: '2026-04-22T08:00:00Z',
     },
   ],
 }
@@ -1234,6 +1307,77 @@ export async function fetchInventoryOverview() {
   return fetchWithFallback<InventoryOverviewResponse>('/api/v1/inventory/overview', inventoryOverview, true)
 }
 
+export async function fetchInventoryItems() {
+  const rows = Array.from(
+    inventoryOverview.balances.reduce((acc, row) => {
+      const current = acc.get(row.itemId) ?? {
+        itemId: row.itemId,
+        itemNumber: row.itemNumber,
+        description: row.description,
+        manufacturer: row.manufacturer,
+        category: row.category,
+        onHandQuantity: 0,
+        reservedQuantity: 0,
+        availableQuantity: 0,
+      }
+      current.onHandQuantity += row.onHandQuantity
+      current.reservedQuantity += row.reservedQuantity
+      current.availableQuantity += row.availableQuantity
+      acc.set(row.itemId, current)
+      return acc
+    }, new Map<string, InventoryItemListResponse['rows'][number]>()).values(),
+  ).sort((left, right) => left.itemNumber.localeCompare(right.itemNumber))
+  return fetchWithFallback<InventoryItemListResponse>('/api/v1/inventory/items', { rows }, true)
+}
+
+export async function fetchInventoryLocations() {
+  refreshMockLocationTotals()
+  return fetchWithFallback<LocationListResponse>('/api/v1/inventory/locations', inventoryLocations, true)
+}
+
+export async function fetchInventoryEvents() {
+  return fetchWithFallback<InventoryEventListResponse>('/api/v1/inventory/events', inventoryEvents, true)
+}
+
+export async function upsertLocation(input: LocationUpsertInput) {
+  try {
+    const response = await fetch(`${config.apiBaseUrl}/api/v1/admin/master-data/locations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authorizationHeaders() },
+      body: JSON.stringify(input),
+    })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null)
+      throw new Error((payload as { error?: string } | null)?.error ?? `request failed: ${response.status}`)
+    }
+    const payload = await response.json()
+    return payload.data as LocationListResponse['rows'][number]
+  } catch (error) {
+    if (!allowMockApiFallback()) {
+      throw error
+    }
+    const code = input.code.trim().toUpperCase()
+    const existing = inventoryLocations.rows.find((row) => row.code === code)
+    if (existing) {
+      existing.name = input.name.trim()
+      existing.locationType = input.locationType.trim()
+      existing.isActive = input.isActive
+    } else {
+      inventoryLocations.rows.push({
+        code,
+        name: input.name.trim(),
+        locationType: input.locationType.trim(),
+        isActive: input.isActive,
+        onHandQuantity: 0,
+        reservedQuantity: 0,
+        availableQuantity: 0,
+      })
+    }
+    refreshMockLocationTotals()
+    return delay(inventoryLocations.rows.find((row) => row.code === code)!)
+  }
+}
+
 export async function fetchShortages(device?: string, scope?: string) {
   const search = new URLSearchParams()
   if (device) {
@@ -1893,6 +2037,18 @@ export async function adjustInventory(input: InventoryAdjustInput) {
       target.onHandQuantity += input.quantityDelta
       target.availableQuantity += input.quantityDelta
     }
+    pushMockInventoryEvent({
+      eventType: 'adjust',
+      itemId: input.itemId,
+      fromLocationCode: '',
+      toLocationCode: input.locationCode,
+      quantityDelta: input.quantityDelta,
+      actorId: 'local-user',
+      sourceType: 'manual',
+      sourceId: '',
+      note: input.note,
+    })
+    refreshMockLocationTotals()
     return delay({ status: 'created' })
   }
 }
@@ -1918,7 +2074,30 @@ export async function receiveInventory(input: InventoryReceiveInput) {
     if (target) {
       target.onHandQuantity += input.quantity
       target.availableQuantity += input.quantity
+    } else {
+      const item = inventoryOverview.balances.find((row) => row.itemId === input.itemId)
+      if (item) {
+        inventoryOverview.balances.push({
+          ...item,
+          locationCode: input.locationCode,
+          onHandQuantity: input.quantity,
+          reservedQuantity: 0,
+          availableQuantity: input.quantity,
+        })
+      }
     }
+    pushMockInventoryEvent({
+      eventType: 'receive',
+      itemId: input.itemId,
+      fromLocationCode: '',
+      toLocationCode: input.locationCode,
+      quantityDelta: input.quantity,
+      actorId: input.actorId,
+      sourceType: input.sourceType,
+      sourceId: input.sourceId,
+      note: input.note,
+    })
+    refreshMockLocationTotals()
     return delay({ status: 'created' })
   }
 }
@@ -1940,8 +2119,99 @@ export async function moveInventory(input: InventoryMoveInput) {
     if (!allowMockApiFallback()) {
       throw error
     }
+    const source = inventoryOverview.balances.find((row) => row.itemId === input.itemId && row.locationCode === input.fromLocationCode)
+    if (source) {
+      source.onHandQuantity -= input.quantity
+      source.availableQuantity -= input.quantity
+    }
+    const target = inventoryOverview.balances.find((row) => row.itemId === input.itemId && row.locationCode === input.toLocationCode)
+    if (target) {
+      target.onHandQuantity += input.quantity
+      target.availableQuantity += input.quantity
+    } else if (source) {
+      inventoryOverview.balances.push({
+        ...source,
+        locationCode: input.toLocationCode,
+        onHandQuantity: input.quantity,
+        reservedQuantity: 0,
+        availableQuantity: input.quantity,
+      })
+    }
+    pushMockInventoryEvent({
+      eventType: 'move',
+      itemId: input.itemId,
+      fromLocationCode: input.fromLocationCode,
+      toLocationCode: input.toLocationCode,
+      quantityDelta: input.quantity,
+      actorId: input.actorId,
+      sourceType: input.sourceType,
+      sourceId: input.sourceId,
+      note: input.note,
+    })
+    refreshMockLocationTotals()
     return delay({ status: 'created' })
   }
+}
+
+function refreshMockLocationTotals() {
+  const totals = inventoryOverview.balances.reduce(
+    (acc, row) => {
+      const current = acc.get(row.locationCode) ?? { onHandQuantity: 0, reservedQuantity: 0, availableQuantity: 0 }
+      current.onHandQuantity += row.onHandQuantity
+      current.reservedQuantity += row.reservedQuantity
+      current.availableQuantity += row.availableQuantity
+      acc.set(row.locationCode, current)
+      return acc
+    },
+    new Map<string, { onHandQuantity: number; reservedQuantity: number; availableQuantity: number }>(),
+  )
+  for (const [code, total] of totals) {
+    let location = inventoryLocations.rows.find((row) => row.code === code)
+    if (!location) {
+      location = { code, name: code, locationType: 'warehouse', isActive: true, onHandQuantity: 0, reservedQuantity: 0, availableQuantity: 0 }
+      inventoryLocations.rows.push(location)
+    }
+    location.onHandQuantity = total.onHandQuantity
+    location.reservedQuantity = total.reservedQuantity
+    location.availableQuantity = total.availableQuantity
+  }
+  for (const location of inventoryLocations.rows) {
+    if (!totals.has(location.code)) {
+      location.onHandQuantity = 0
+      location.reservedQuantity = 0
+      location.availableQuantity = 0
+    }
+  }
+}
+
+function pushMockInventoryEvent(input: {
+  eventType: string
+  itemId: string
+  fromLocationCode: string
+  toLocationCode: string
+  quantityDelta: number
+  actorId: string
+  sourceType: string
+  sourceId: string
+  note: string
+}) {
+  const item = inventoryOverview.balances.find((row) => row.itemId === input.itemId)
+  inventoryEvents.rows.unshift({
+    id: `evt-${Date.now()}`,
+    eventType: input.eventType,
+    itemId: input.itemId,
+    itemNumber: item?.itemNumber ?? input.itemId,
+    fromLocationCode: input.fromLocationCode,
+    toLocationCode: input.toLocationCode,
+    quantityDelta: input.quantityDelta,
+    actorId: input.actorId || 'local-user',
+    sourceType: input.sourceType || 'manual',
+    sourceId: input.sourceId,
+    correlationId: '',
+    reversedByEventId: '',
+    note: input.note,
+    occurredAt: new Date().toISOString(),
+  })
 }
 
 export async function fetchProcurementSyncRuns() {

@@ -11,11 +11,14 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { ItemCombobox } from '@/components/ui/item-combobox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Separator } from '@/components/ui/separator'
+import { MasterItemAliasDialog } from '@/components/MasterItemAliasDialog'
 
 import { useAuthSession } from '@/hooks/useAuthSession'
 import { useMasterData } from '@/hooks/useMasterData'
+import { useMasterItems } from '@/hooks/useMasterItems'
 import { useOCRJobDetail } from '@/hooks/useOCRJobDetail'
 import { useOCRJobs } from '@/hooks/useOCRJobs'
 import { useProcurementBudgetCategories } from '@/hooks/useProcurementBudgetCategories'
@@ -41,7 +44,6 @@ type RegisterDraft = OCRRegisterItemInput
 type ReviewHeaderOverride = Partial<Pick<OCRReviewUpdateInput, 'supplierId' | 'quotationNumber' | 'issueDate'>>
 
 const UNMATCHED_SUPPLIER_VALUE = '__unmatched_supplier__'
-const UNRESOLVED_ITEM_VALUE = '__unresolved_item__'
 const UNASSIGNED_BUDGET_VALUE = '__unassigned_budget__'
 const NEW_CATEGORY_VALUE = '__new_category__'
 
@@ -55,6 +57,7 @@ export function OCRQueuePage() {
   const jobsReady = sessionReady && (!filterMyJobs || currentUserId !== '')
   const { data: jobs } = useOCRJobs(filterMyJobs ? currentUserId : undefined, jobsReady)
   const { data: masterData } = useMasterData(sessionReady)
+  const { data: masterItems } = useMasterItems(sessionReady)
   const { data: budgetCategories } = useProcurementBudgetCategories(undefined, sessionReady)
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const jobRows = jobs?.rows ?? []
@@ -81,6 +84,7 @@ export function OCRQueuePage() {
   const [draftError, setDraftError] = useState('')
   const [reviewError, setReviewError] = useState('')
   const [deletingJobId, setDeletingJobId] = useState('')
+  const [aliasLineId, setAliasLineId] = useState('')
   const [ocrElapsedSec, setOcrElapsedSec] = useState(0)
 
   // Elapsed-time counter while OCR is running
@@ -92,6 +96,13 @@ export function OCRQueuePage() {
 
   const currentHeader = detail ? getReviewHeader(detail, reviewHeaderByJob[selectedID]) : null
   const currentLines = detail ? (detail.lines ?? []).map((line) => getReviewLine(line, reviewLinesByJob[selectedID]?.[line.id])) : []
+  const masterItemOptions = (masterItems?.rows ?? []).map((item) => ({
+    itemId: item.id,
+    itemNumber: item.itemNumber,
+    description: item.description,
+    manufacturer: item.manufacturerKey,
+    category: item.categoryKey,
+  }))
   const hasReviewOverrides =
     !!reviewHeaderByJob[selectedID] || Object.keys(reviewLinesByJob[selectedID] ?? {}).length > 0
   const unresolvedLineCount = currentLines.filter((line) => !line.itemId).length
@@ -348,6 +359,8 @@ export function OCRQueuePage() {
       return next
     })
   }
+
+  const aliasLine = currentLines.find((line) => line.id === aliasLineId)
 
   if (sessionLoading || !sessionReady) {
     return (
@@ -650,6 +663,14 @@ export function OCRQueuePage() {
                               {busyLineId === line.id && <Loader2 className="mr-2 h-3 w-3 animate-spin" />}
                               {busyLineId === line.id ? 'LLM 解析中...' : 'LLM Assist'}
                             </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setAliasLineId(line.id)}
+                              disabled={!line.itemId || !currentHeader?.supplierId}
+                            >
+                              Add Alias
+                            </Button>
                           </div>
                         </div>
                         {assist && (
@@ -660,22 +681,20 @@ export function OCRQueuePage() {
                         <div className="grid grid-cols-3 gap-4">
                           <div className="space-y-2">
                             <Label htmlFor={`item-${line.id}`}>Resolved Item</Label>
-                            <Select
-                              value={line.itemId || UNRESOLVED_ITEM_VALUE}
-                              onValueChange={(value) => updateReviewLine(line.id, { itemId: value === UNRESOLVED_ITEM_VALUE ? '' : value })}
-                            >
-                              <SelectTrigger id={`item-${line.id}`}>
-                                <SelectValue placeholder="Unresolved" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value={UNRESOLVED_ITEM_VALUE}>Unresolved</SelectItem>
-                                {buildItemOptions(line).map((option) => (
-                                  <SelectItem key={option.value || `empty-${line.id}`} value={option.value}>
-                                    {option.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <ItemCombobox
+                              items={mergeLineItemOptions(line, masterItemOptions)}
+                              value={line.itemId}
+                              onValueChange={(value) => updateReviewLine(line.id, { itemId: value })}
+                              onCreateNew={() => {
+                                updateRegisterDraft(line.id, defaultRegisterDraft(line, currentHeader?.supplierId ?? ''))
+                              }}
+                              placeholder="Search existing item or leave unresolved"
+                            />
+                            {line.itemId && currentHeader?.supplierId && (
+                              <Button type="button" variant="ghost" size="sm" className="px-0" onClick={() => setAliasLineId(line.id)}>
+                                Register OCR number as supplier alias
+                              </Button>
+                            )}
                           </div>
                           <div className="space-y-2">
                             <Label htmlFor={`location-${line.id}`}>Delivery Location</Label>
@@ -945,6 +964,24 @@ export function OCRQueuePage() {
           </div>
         </div>
       )}
+      <MasterItemAliasDialog
+        open={!!aliasLine}
+        mode="alias-only"
+        masterData={masterData}
+        masterItems={masterItems?.rows ?? []}
+        initialItemId={aliasLine?.itemId ?? ''}
+        initialSupplierId={currentHeader?.supplierId ?? ''}
+        initialSupplierAliasNumber={aliasLine?.itemNumber ?? ''}
+        onOpenChange={(open) => {
+          if (!open) setAliasLineId('')
+        }}
+        onCompleted={() => {
+          if (aliasLine) {
+            updateReviewLine(aliasLine.id, { itemId: aliasLine.itemId, isUserConfirmed: true })
+          }
+          void Promise.all([mutate('master-data'), mutate('master-items'), mutate(['ocr-job-detail', selectedID])])
+        }}
+      />
     </div>
   )
 }
@@ -1017,24 +1054,30 @@ function dedupeSuppliers(detail?: OCRJobDetailResponse, masterData?: { suppliers
   return Array.from(map.entries()).map(([id, name]) => ({ id, name }))
 }
 
-function buildItemOptions(line: OCRResultLine) {
-  const seen = new Set<string>()
-  const options = []
-  if (line.itemId) {
-    options.push({ value: line.itemId, label: `Current / ${line.itemId}` })
-    seen.add(line.itemId)
-  }
+function mergeLineItemOptions(
+  line: OCRResultLine,
+  masterItems: { itemId: string; itemNumber: string; description: string; manufacturer?: string; category?: string }[],
+) {
+  const byId = new Map(masterItems.map((item) => [item.itemId, item]))
   for (const candidate of line.matchCandidates) {
-    if (seen.has(candidate.itemId)) {
-      continue
-    }
-    seen.add(candidate.itemId)
-    options.push({
-      value: candidate.itemId,
-      label: `${candidate.canonicalItemNumber} (${Math.round(candidate.score * 100)}%)`,
+    byId.set(candidate.itemId, {
+      itemId: candidate.itemId,
+      itemNumber: candidate.canonicalItemNumber,
+      description: candidate.description,
+      manufacturer: candidate.manufacturerName,
+      category: `candidate ${Math.round(candidate.score * 100)}%`,
     })
   }
-  return options
+  if (line.itemId && !byId.has(line.itemId)) {
+    byId.set(line.itemId, {
+      itemId: line.itemId,
+      itemNumber: line.itemNumber || line.itemId,
+      description: line.itemDescription,
+      manufacturer: line.manufacturerName,
+      category: 'current',
+    })
+  }
+  return Array.from(byId.values()).sort((left, right) => left.itemNumber.localeCompare(right.itemNumber))
 }
 
 function emptyLine(id: string): OCRResultLine {
