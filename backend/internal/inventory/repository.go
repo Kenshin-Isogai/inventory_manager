@@ -416,6 +416,8 @@ func (r *Repository) ShortageCSV(ctx context.Context, device, scope string) (str
 
 func (r *Repository) ExportMasterCSV(ctx context.Context, exportType string) (string, error) {
 	switch strings.TrimSpace(exportType) {
+	case "items_with_aliases":
+		return r.exportItemsWithAliasesCSV(ctx)
 	case "items":
 		return r.exportItemsCSV(ctx)
 	case "aliases":
@@ -450,11 +452,16 @@ func (r *Repository) ImportMasterCSV(ctx context.Context, importType, fileName s
 	defer tx.Rollback()
 
 	inserted, updated, err := 0, 0, error(nil)
+	summary := map[string]int{}
 	switch strings.TrimSpace(importType) {
+	case "items_with_aliases":
+		summary, err = r.importItemsWithAliasesCSVTx(ctx, tx, headers, records[1:])
 	case "items":
 		inserted, updated, err = r.importItemsCSVTx(ctx, tx, headers, records[1:])
+		summary = map[string]int{"inserted": inserted, "updated": updated}
 	case "aliases":
 		inserted, updated, err = r.importAliasesCSVTx(ctx, tx, headers, records[1:])
+		summary = map[string]int{"inserted": inserted, "updated": updated}
 	default:
 		err = fmt.Errorf("unsupported import type: %s", importType)
 	}
@@ -467,7 +474,7 @@ func (r *Repository) ImportMasterCSV(ctx context.Context, importType, fileName s
 		return job, err
 	}
 
-	summaryBytes, _ := json.Marshal(map[string]int{"inserted": inserted, "updated": updated})
+	summaryBytes, _ := json.Marshal(summary)
 	jobID := fmt.Sprintf("imp-%d", time.Now().UnixNano())
 	createdAt := time.Now().UTC()
 	if _, err := tx.ExecContext(ctx, `
@@ -530,6 +537,68 @@ func (r *Repository) exportItemsCSV(ctx context.Context) (string, error) {
 	return buffer.String(), rows.Err()
 }
 
+func (r *Repository) exportItemsWithAliasesCSV(ctx context.Context) (string, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			i.canonical_item_number,
+			i.description,
+			m.name,
+			c.name,
+			COALESCE(i.default_supplier_id, ''),
+			COALESCE(sia.supplier_id, ''),
+			COALESCE(s.name, ''),
+			COALESCE(sia.supplier_item_number, ''),
+			COALESCE(sia.units_per_order, 1),
+			i.note
+		FROM items i
+		JOIN manufacturers m ON m.key = i.manufacturer_key
+		JOIN categories c ON c.key = i.category_key
+		LEFT JOIN supplier_item_aliases sia ON sia.item_id = i.id
+		LEFT JOIN suppliers s ON s.id = sia.supplier_id
+		ORDER BY i.canonical_item_number, s.name, sia.supplier_item_number
+	`)
+	if err != nil {
+		return "", fmt.Errorf("query items with aliases export: %w", err)
+	}
+	defer rows.Close()
+
+	var buffer bytes.Buffer
+	writer := csv.NewWriter(&buffer)
+	if err := writer.Write([]string{
+		"canonical_item_number",
+		"description",
+		"manufacturer",
+		"category",
+		"default_supplier_id",
+		"supplier_id",
+		"supplier_name",
+		"supplier_item_number",
+		"units_per_order",
+		"note",
+	}); err != nil {
+		return "", fmt.Errorf("write items with aliases csv header: %w", err)
+	}
+	for rows.Next() {
+		var itemNumber, description, manufacturer, category, defaultSupplierID, supplierID, supplierName, aliasNumber, note string
+		var unitsPerOrder int
+		if err := rows.Scan(&itemNumber, &description, &manufacturer, &category, &defaultSupplierID, &supplierID, &supplierName, &aliasNumber, &unitsPerOrder, &note); err != nil {
+			return "", fmt.Errorf("scan items with aliases export row: %w", err)
+		}
+		units := ""
+		if aliasNumber != "" {
+			units = strconv.Itoa(unitsPerOrder)
+		}
+		if err := writer.Write([]string{itemNumber, description, manufacturer, category, defaultSupplierID, supplierID, supplierName, aliasNumber, units, note}); err != nil {
+			return "", fmt.Errorf("write items with aliases export row: %w", err)
+		}
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return "", fmt.Errorf("flush items with aliases csv: %w", err)
+	}
+	return buffer.String(), rows.Err()
+}
+
 func (r *Repository) exportAliasesCSV(ctx context.Context) (string, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT
@@ -568,6 +637,122 @@ func (r *Repository) exportAliasesCSV(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("flush aliases export: %w", err)
 	}
 	return buffer.String(), rows.Err()
+}
+
+func (r *Repository) importItemsWithAliasesCSVTx(ctx context.Context, tx *sql.Tx, headers []string, rows [][]string) (map[string]int, error) {
+	summary := map[string]int{
+		"item_inserted":  0,
+		"item_updated":   0,
+		"alias_inserted": 0,
+		"alias_updated":  0,
+		"alias_only":     0,
+	}
+	for _, row := range rows {
+		record := csvRecord(headers, row)
+		itemNumber := strings.TrimSpace(record["canonical_item_number"])
+		description := strings.TrimSpace(record["description"])
+		manufacturerName := strings.TrimSpace(record["manufacturer"])
+		categoryName := strings.TrimSpace(record["category"])
+		defaultSupplierID := strings.TrimSpace(record["default_supplier_id"])
+		supplierID := strings.TrimSpace(record["supplier_id"])
+		aliasNumber := strings.TrimSpace(record["supplier_item_number"])
+		note := strings.TrimSpace(record["note"])
+		if itemNumber == "" {
+			return nil, fmt.Errorf("items_with_aliases csv requires canonical_item_number")
+		}
+
+		hasDescription := description != ""
+		hasManufacturer := manufacturerName != ""
+		hasCategory := categoryName != ""
+		hasItemFields := hasDescription || hasManufacturer || hasCategory
+		hasCompleteItem := hasDescription && hasManufacturer && hasCategory
+		if hasItemFields && !hasCompleteItem {
+			return nil, fmt.Errorf("items_with_aliases csv requires description, manufacturer, and category together for item upsert: %s", itemNumber)
+		}
+
+		aliasSupplierID := supplierID
+		if aliasSupplierID == "" {
+			aliasSupplierID = defaultSupplierID
+		}
+		hasAliasFields := aliasNumber != "" || supplierID != "" || strings.TrimSpace(record["units_per_order"]) != ""
+		if !hasCompleteItem && !hasAliasFields {
+			return nil, fmt.Errorf("items_with_aliases csv row must include item fields or supplier alias fields: %s", itemNumber)
+		}
+		if hasAliasFields && (aliasSupplierID == "" || aliasNumber == "") {
+			return nil, fmt.Errorf("items_with_aliases alias rows require supplier_id or default_supplier_id, and supplier_item_number: %s", itemNumber)
+		}
+
+		itemID := ""
+		if hasCompleteItem {
+			if defaultSupplierID != "" {
+				if err := r.ensureSupplierExistsTx(ctx, tx, defaultSupplierID); err != nil {
+					return nil, err
+				}
+			}
+			manufacturerKey := normalizeLookupKey(manufacturerName)
+			categoryKey := normalizeLookupKey(categoryName)
+			if err := r.upsertManufacturerTx(ctx, tx, manufacturerKey, manufacturerName); err != nil {
+				return nil, err
+			}
+			if err := r.upsertCategoryTx(ctx, tx, categoryKey, categoryName); err != nil {
+				return nil, err
+			}
+
+			err := tx.QueryRowContext(ctx, `SELECT id FROM items WHERE canonical_item_number = $1`, itemNumber).Scan(&itemID)
+			if err != nil && err != sql.ErrNoRows {
+				return nil, fmt.Errorf("query import item: %w", err)
+			}
+			if itemID == "" {
+				itemID = fmt.Sprintf("item-%d", time.Now().UnixNano())
+				if _, err := tx.ExecContext(ctx, `
+					INSERT INTO items (id, manufacturer_key, category_key, canonical_item_number, description, default_supplier_id, note, active)
+					VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, TRUE)
+				`, itemID, manufacturerKey, categoryKey, itemNumber, description, defaultSupplierID, note); err != nil {
+					return nil, fmt.Errorf("insert import item: %w", err)
+				}
+				summary["item_inserted"]++
+			} else {
+				if _, err := tx.ExecContext(ctx, `
+					UPDATE items
+					SET manufacturer_key = $2,
+					    category_key = $3,
+					    description = $4,
+					    default_supplier_id = NULLIF($5, ''),
+					    note = $6
+					WHERE id = $1
+				`, itemID, manufacturerKey, categoryKey, description, defaultSupplierID, note); err != nil {
+					return nil, fmt.Errorf("update import item: %w", err)
+				}
+				summary["item_updated"]++
+			}
+		} else {
+			if err := tx.QueryRowContext(ctx, `SELECT id FROM items WHERE canonical_item_number = $1`, itemNumber).Scan(&itemID); err != nil {
+				if err == sql.ErrNoRows {
+					return nil, fmt.Errorf("canonical item not found for alias-only row: %s", itemNumber)
+				}
+				return nil, fmt.Errorf("query alias-only item: %w", err)
+			}
+			summary["alias_only"]++
+		}
+
+		if !hasAliasFields {
+			continue
+		}
+		if err := r.ensureSupplierExistsTx(ctx, tx, aliasSupplierID); err != nil {
+			return nil, err
+		}
+		unitsPerOrder := parsePositiveInt(record["units_per_order"], 1)
+		inserted, err := r.upsertAliasCSVTx(ctx, tx, itemID, aliasSupplierID, aliasNumber, unitsPerOrder)
+		if err != nil {
+			return nil, err
+		}
+		if inserted {
+			summary["alias_inserted"]++
+		} else {
+			summary["alias_updated"]++
+		}
+	}
+	return summary, nil
 }
 
 func (r *Repository) importItemsCSVTx(ctx context.Context, tx *sql.Tx, headers []string, rows [][]string) (int, int, error) {
@@ -649,38 +834,49 @@ func (r *Repository) importAliasesCSVTx(ctx context.Context, tx *sql.Tx, headers
 			}
 			return 0, 0, fmt.Errorf("query alias item: %w", err)
 		}
-		var existingAliasID, existingItemID string
-		err := tx.QueryRowContext(ctx, `
-			SELECT id, item_id
-			FROM supplier_item_aliases
-			WHERE supplier_id = $1 AND supplier_item_number = $2
-		`, supplierID, aliasNumber).Scan(&existingAliasID, &existingItemID)
-		if err != nil && err != sql.ErrNoRows {
-			return 0, 0, fmt.Errorf("query alias duplicate: %w", err)
+		insertedAlias, err := r.upsertAliasCSVTx(ctx, tx, itemID, supplierID, aliasNumber, unitsPerOrder)
+		if err != nil {
+			return 0, 0, err
 		}
-		if existingAliasID == "" {
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO supplier_item_aliases (id, item_id, supplier_id, supplier_item_number, units_per_order)
-				VALUES ($1, $2, $3, $4, $5)
-			`, fmt.Sprintf("alias-%d", time.Now().UnixNano()), itemID, supplierID, aliasNumber, unitsPerOrder); err != nil {
-				return 0, 0, fmt.Errorf("insert alias import: %w", err)
-			}
+		if insertedAlias {
 			inserted++
 			continue
-		}
-		if existingItemID != itemID {
-			return 0, 0, fmt.Errorf("supplier alias already belongs to another item: %s", aliasNumber)
-		}
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE supplier_item_aliases
-			SET units_per_order = $2
-			WHERE id = $1
-		`, existingAliasID, unitsPerOrder); err != nil {
-			return 0, 0, fmt.Errorf("update alias import: %w", err)
 		}
 		updated++
 	}
 	return inserted, updated, nil
+}
+
+func (r *Repository) upsertAliasCSVTx(ctx context.Context, tx *sql.Tx, itemID, supplierID, aliasNumber string, unitsPerOrder int) (bool, error) {
+	var existingAliasID, existingItemID string
+	err := tx.QueryRowContext(ctx, `
+		SELECT id, item_id
+		FROM supplier_item_aliases
+		WHERE supplier_id = $1 AND supplier_item_number = $2
+	`, supplierID, aliasNumber).Scan(&existingAliasID, &existingItemID)
+	if err != nil && err != sql.ErrNoRows {
+		return false, fmt.Errorf("query alias duplicate: %w", err)
+	}
+	if existingAliasID == "" {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO supplier_item_aliases (id, item_id, supplier_id, supplier_item_number, units_per_order)
+			VALUES ($1, $2, $3, $4, $5)
+		`, fmt.Sprintf("alias-%d", time.Now().UnixNano()), itemID, supplierID, aliasNumber, unitsPerOrder); err != nil {
+			return false, fmt.Errorf("insert alias import: %w", err)
+		}
+		return true, nil
+	}
+	if existingItemID != itemID {
+		return false, fmt.Errorf("supplier alias already belongs to another item: %s", aliasNumber)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE supplier_item_aliases
+		SET units_per_order = $2
+		WHERE id = $1
+	`, existingAliasID, unitsPerOrder); err != nil {
+		return false, fmt.Errorf("update alias import: %w", err)
+	}
+	return false, nil
 }
 
 func (r *Repository) recordImportFailure(ctx context.Context, importType, fileName string, importErr error) (ImportJob, error) {

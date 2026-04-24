@@ -1322,6 +1322,12 @@ func (r *Repository) ImportPreview(ctx context.Context, importType, fileName str
 				break
 			}
 		}
+		if row.Status == "valid" {
+			row.Code, row.Message = previewImportRow(importType, raw)
+			if strings.HasPrefix(row.Code, "invalid_") {
+				row.Status = "invalid"
+			}
+		}
 		rows = append(rows, row)
 	}
 
@@ -1829,12 +1835,61 @@ func (r *Repository) refreshReservationStatusTx(ctx context.Context, tx *sql.Tx,
 
 func requiredImportHeaders(importType string) []string {
 	switch strings.TrimSpace(importType) {
+	case "items_with_aliases":
+		return []string{"canonical_item_number"}
 	case "items":
 		return []string{"canonical_item_number", "description", "manufacturer", "category"}
 	case "aliases":
 		return []string{"supplier_id", "canonical_item_number", "supplier_item_number", "units_per_order"}
 	default:
 		return []string{}
+	}
+}
+
+func previewImportRow(importType string, raw map[string]string) (string, string) {
+	switch strings.TrimSpace(importType) {
+	case "items_with_aliases":
+		description := strings.TrimSpace(raw["description"])
+		manufacturer := strings.TrimSpace(raw["manufacturer"])
+		category := strings.TrimSpace(raw["category"])
+		defaultSupplierID := strings.TrimSpace(raw["default_supplier_id"])
+		supplierID := strings.TrimSpace(raw["supplier_id"])
+		aliasNumber := strings.TrimSpace(raw["supplier_item_number"])
+		unitsPerOrder := strings.TrimSpace(raw["units_per_order"])
+
+		hasDescription := description != ""
+		hasManufacturer := manufacturer != ""
+		hasCategory := category != ""
+		hasItemFields := hasDescription || hasManufacturer || hasCategory
+		hasCompleteItem := hasDescription && hasManufacturer && hasCategory
+		hasAliasFields := aliasNumber != "" || supplierID != "" || unitsPerOrder != ""
+		aliasSupplierID := supplierID
+		if aliasSupplierID == "" {
+			aliasSupplierID = defaultSupplierID
+		}
+
+		if hasItemFields && !hasCompleteItem {
+			return "invalid_partial_item", "description, manufacturer, and category are required together for item rows"
+		}
+		if !hasCompleteItem && !hasAliasFields {
+			return "invalid_empty_master_row", "row must include item fields or supplier alias fields"
+		}
+		if hasAliasFields && (aliasSupplierID == "" || aliasNumber == "") {
+			return "invalid_alias", "supplier_id or default_supplier_id, and supplier_item_number are required for alias rows"
+		}
+		if hasCompleteItem && hasAliasFields {
+			return "preview_item_with_alias", "Row is ready to import as item with supplier alias"
+		}
+		if hasCompleteItem {
+			return "preview_item", "Row is ready to import as master item"
+		}
+		return "preview_alias_for_existing_item", "Row is ready to import as alias for an existing canonical item"
+	case "items":
+		return "preview_item", "Row is ready to import as master item"
+	case "aliases":
+		return "preview_alias", "Row is ready to import as supplier alias"
+	default:
+		return "invalid_import_type", "unsupported import type"
 	}
 }
 

@@ -297,7 +297,7 @@ export type ShortageListResponse = {
   rows: ShortageRow[]
 }
 
-export type ImportType = 'items' | 'aliases'
+export type ImportType = 'items_with_aliases'
 
 export type ImportJob = {
   id: string

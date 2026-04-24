@@ -16,7 +16,7 @@ import {
 import { Label } from '@/components/ui/label'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuthSession } from '@/hooks/useAuthSession'
 import { useImports } from '@/hooks/useImports'
 import { downloadTextFile } from '@/lib/csv'
@@ -39,24 +39,31 @@ type OperatorImportsPageProps = {
   mode?: 'upload' | 'history'
 }
 
-const importTypeMeta: Record<ImportType, { label: string; description: string; headers: string[] }> = {
-  items: {
-    label: 'Items CSV',
-    description: 'Register canonical items with manufacturer, description, and category data.',
-    headers: ['canonical_item_number', 'description', 'manufacturer', 'category'],
-  },
-  aliases: {
-    label: 'Aliases CSV',
-    description: 'Register supplier aliases and order-unit information for canonical items.',
-    headers: ['supplier_id', 'canonical_item_number', 'supplier_item_number', 'units_per_order'],
+const importTypeMeta: Record<ImportType, { label: string; description: string; headers: string[]; optionalHeaders: string[] }> = {
+  items_with_aliases: {
+    label: 'Items + Aliases CSV',
+    description:
+      'Register canonical items and supplier/order aliases in one CSV. Alias-only rows can update existing canonical items.',
+    headers: ['canonical_item_number'],
+    optionalHeaders: [
+      'description',
+      'manufacturer',
+      'category',
+      'default_supplier_id',
+      'supplier_id',
+      'supplier_item_number',
+      'units_per_order',
+      'note',
+    ],
   },
 }
 
 const importTemplates: Record<ImportType, string> = {
-  items:
-    'canonical_item_number,description,manufacturer,category,default_supplier_id,note\nER2,Control relay,Omron,Relay,sup-misumi,Initial master row\n',
-  aliases:
-    'supplier_id,canonical_item_number,supplier_item_number,units_per_order,note\nsup-misumi,ER2,ER2-P4,4,Pack alias\n',
+  items_with_aliases: [
+    'canonical_item_number,description,manufacturer,category,default_supplier_id,supplier_id,supplier_item_number,units_per_order,note',
+    'ER2,Control relay,Omron,Relay,sup-misumi,sup-misumi,ER2-P4,4,New item with pack alias',
+    'ER2,,,,,sup-misumi,ER2-P8,8,Alias-only row for existing canonical item',
+  ].join('\n'),
 }
 
 function getStatusBadgeVariant(status: string) {
@@ -193,7 +200,7 @@ export function OperatorImportsPage({ mode = 'upload' }: OperatorImportsPageProp
   const { mutate } = useSWRConfig()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const [importType, setImportType] = useState<ImportType>('items')
+  const [importType, setImportType] = useState<ImportType>('items_with_aliases')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [previewResult, setPreviewResult] = useState<ImportPreviewResult | null>(null)
   const [previewFilter, setPreviewFilter] = useState<'all' | 'errors' | 'valid'>('all')
@@ -414,29 +421,21 @@ export function OperatorImportsPage({ mode = 'upload' }: OperatorImportsPageProp
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-3">
-                <Label>Import type</Label>
+                <Label>Import format</Label>
                 <Tabs value={importType} onValueChange={(value) => handleImportTypeChange(value as ImportType)}>
-                  <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="items">Items CSV</TabsTrigger>
-                    <TabsTrigger value="aliases">Aliases CSV</TabsTrigger>
+                  <TabsList className="grid w-full grid-cols-1">
+                    <TabsTrigger value="items_with_aliases">Items + Aliases CSV</TabsTrigger>
                   </TabsList>
-                  <TabsContent value="items" className="space-y-3">
-                    <div className="rounded-lg border bg-muted/30 p-4 text-sm">
-                      <p className="font-medium">{importTypeMeta.items.description}</p>
-                      <p className="mt-2 text-muted-foreground">
-                        Required columns: {importTypeMeta.items.headers.join(', ')}
-                      </p>
-                    </div>
-                  </TabsContent>
-                  <TabsContent value="aliases" className="space-y-3">
-                    <div className="rounded-lg border bg-muted/30 p-4 text-sm">
-                      <p className="font-medium">{importTypeMeta.aliases.description}</p>
-                      <p className="mt-2 text-muted-foreground">
-                        Required columns: {importTypeMeta.aliases.headers.join(', ')}
-                      </p>
-                    </div>
-                  </TabsContent>
                 </Tabs>
+                <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+                  <p className="font-medium">{importTypeMeta.items_with_aliases.description}</p>
+                  <p className="mt-2 text-muted-foreground">
+                    Required column: {importTypeMeta.items_with_aliases.headers.join(', ')}
+                  </p>
+                  <p className="mt-1 text-muted-foreground">
+                    Optional columns: {importTypeMeta.items_with_aliases.optionalHeaders.join(', ')}
+                  </p>
+                </div>
               </div>
 
               <div className="space-y-3">

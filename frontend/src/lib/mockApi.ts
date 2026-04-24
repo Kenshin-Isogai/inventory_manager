@@ -379,18 +379,18 @@ const imports: ImportHistoryResponse = {
   rows: [
     {
       id: 'imp-001',
-      importType: 'items',
+      importType: 'items_with_aliases',
       status: 'completed',
-      fileName: 'items_master_20260422.csv',
-      summary: '{"inserted":3,"updated":0}',
+      fileName: 'items_with_aliases_20260422.csv',
+      summary: '{"item_inserted":3,"item_updated":0,"alias_inserted":2,"alias_updated":0,"alias_only":0}',
       createdAt: '2026-04-22T09:00:00Z',
     },
     {
       id: 'imp-002',
-      importType: 'aliases',
-      status: 'pending',
-      fileName: 'supplier_aliases_20260422.csv',
-      summary: '{"rows":14}',
+      importType: 'items_with_aliases',
+      status: 'completed',
+      fileName: 'alias_updates_20260422.csv',
+      summary: '{"item_inserted":0,"item_updated":0,"alias_inserted":1,"alias_updated":13,"alias_only":14}',
       createdAt: '2026-04-22T10:30:00Z',
     },
   ],
@@ -399,11 +399,11 @@ const imports: ImportHistoryResponse = {
 const importDetails: Record<string, ImportDetailResponse> = {
   'imp-001': {
     id: 'imp-001',
-    importType: 'items',
+    importType: 'items_with_aliases',
     status: 'completed',
     lifecycleState: 'applied',
-    fileName: 'items_master_20260422.csv',
-    summary: '{"inserted":3,"updated":0}',
+    fileName: 'items_with_aliases_20260422.csv',
+    summary: '{"item_inserted":3,"item_updated":0,"alias_inserted":2,"alias_updated":0,"alias_only":0}',
     createdAt: '2026-04-22T09:00:00Z',
     undoneAt: '',
     rows: [
@@ -418,6 +418,9 @@ const importDetails: Record<string, ImportDetailResponse> = {
           manufacturer: 'Omron',
           category: 'Relay',
           default_supplier_id: 'sup-misumi',
+          supplier_id: 'sup-misumi',
+          supplier_item_number: 'ER2-P4',
+          units_per_order: '4',
         },
       },
       {
@@ -451,19 +454,19 @@ const importDetails: Record<string, ImportDetailResponse> = {
   },
   'imp-002': {
     id: 'imp-002',
-    importType: 'aliases',
-    status: 'pending',
-    lifecycleState: 'staged',
-    fileName: 'supplier_aliases_20260422.csv',
-    summary: '{"rows":14}',
+    importType: 'items_with_aliases',
+    status: 'completed',
+    lifecycleState: 'applied',
+    fileName: 'alias_updates_20260422.csv',
+    summary: '{"item_inserted":0,"item_updated":0,"alias_inserted":1,"alias_updated":13,"alias_only":14}',
     createdAt: '2026-04-22T10:30:00Z',
     undoneAt: '',
     rows: [
       {
         rowNumber: 1,
         status: 'valid',
-        code: 'stage_alias',
-        message: 'Alias row staged for review',
+        code: 'preview_alias_for_existing_item',
+        message: 'Alias row ready for existing canonical item',
         raw: {
           supplier_id: 'sup-misumi',
           supplier_name: 'MISUMI',
@@ -527,7 +530,7 @@ const masterData: MasterDataSummaryResponse = {
       supplier: 'Thorlabs Japan',
     },
   ],
-  recentImportFiles: ['supplier_aliases_20260422.csv', 'items_master_20260422.csv'],
+  recentImportFiles: ['items_with_aliases_20260422.csv', 'alias_updates_20260422.csv'],
 }
 
 const projects: ProjectSummary[] = [
@@ -1227,8 +1230,7 @@ export async function fetchMasterData() {
 }
 
 const importRequiredHeaders: Record<ImportType, string[]> = {
-  items: ['canonical_item_number', 'description', 'manufacturer', 'category'],
-  aliases: ['supplier_id', 'canonical_item_number', 'supplier_item_number', 'units_per_order'],
+  items_with_aliases: ['canonical_item_number'],
 }
 
 function normalizeCSVHeader(value: string) {
@@ -1281,6 +1283,17 @@ async function buildMockImportPreview(importType: ImportType, file: File): Promi
       return accumulator
     }, {})
     const missingHeader = importRequiredHeaders[importType].find((header) => raw[header]?.trim() === '')
+    const description = raw.description?.trim() ?? ''
+    const manufacturer = raw.manufacturer?.trim() ?? ''
+    const category = raw.category?.trim() ?? ''
+    const defaultSupplierId = raw.default_supplier_id?.trim() ?? ''
+    const supplierId = raw.supplier_id?.trim() ?? ''
+    const supplierItemNumber = raw.supplier_item_number?.trim() ?? ''
+    const unitsPerOrder = raw.units_per_order?.trim() ?? ''
+    const hasItemField = Boolean(description || manufacturer || category)
+    const hasCompleteItem = Boolean(description && manufacturer && category)
+    const hasAliasField = Boolean(supplierId || supplierItemNumber || unitsPerOrder)
+    const aliasSupplierId = supplierId || defaultSupplierId
 
     if (missingHeader) {
       return {
@@ -1291,12 +1304,44 @@ async function buildMockImportPreview(importType: ImportType, file: File): Promi
         raw,
       }
     }
+    if (hasItemField && !hasCompleteItem) {
+      return {
+        rowNumber: index + 1,
+        status: 'invalid',
+        code: 'invalid_partial_item',
+        message: 'description, manufacturer, and category are required together for item rows',
+        raw,
+      }
+    }
+    if (!hasCompleteItem && !hasAliasField) {
+      return {
+        rowNumber: index + 1,
+        status: 'invalid',
+        code: 'invalid_empty_master_row',
+        message: 'row must include item fields or supplier alias fields',
+        raw,
+      }
+    }
+    if (hasAliasField && (!aliasSupplierId || !supplierItemNumber)) {
+      return {
+        rowNumber: index + 1,
+        status: 'invalid',
+        code: 'invalid_alias',
+        message: 'supplier_id or default_supplier_id, and supplier_item_number are required for alias rows',
+        raw,
+      }
+    }
 
     return {
       rowNumber: index + 1,
       status: 'valid',
-      code: importType === 'items' ? 'preview_item' : 'preview_alias',
-      message: importType === 'items' ? 'Row is ready to import as master item' : 'Row is ready to import as supplier alias',
+      code: hasCompleteItem && hasAliasField ? 'preview_item_with_alias' : hasCompleteItem ? 'preview_item' : 'preview_alias_for_existing_item',
+      message:
+        hasCompleteItem && hasAliasField
+          ? 'Row is ready to import as item with supplier alias'
+          : hasCompleteItem
+            ? 'Row is ready to import as master item'
+            : 'Row is ready to import as alias for an existing canonical item',
       raw,
     }
   })
@@ -1331,7 +1376,7 @@ function buildMockImportDetail(preview: ImportPreviewResult): ImportDetailRespon
     rows: preview.rows,
     effects: validRows.map((row, index) => ({
       id: `${id}-fx-${index + 1}`,
-      targetEntityType: preview.importType === 'items' ? 'item' : 'alias',
+      targetEntityType: (row.raw.description ?? '').trim() ? 'item' : 'alias',
       targetEntityId: `${preview.importType}-${row.rowNumber}`,
       effectType: 'insert',
     })),
@@ -1351,17 +1396,10 @@ export async function exportMasterDataCSV(exportType: ImportType) {
     if (!allowMockApiFallback()) {
       throw error
     }
-    if (exportType === 'items') {
-      return delay([
-        'canonical_item_number,description,manufacturer,category,default_supplier_id,note',
-        'ER2,Control relay,Omron,Relay,sup-misumi,Standard relay used in powerboard assemblies',
-        'MK-44,Terminal block 4P,Phoenix Contact,Terminal Block,sup-thorlabs,Common terminal block',
-      ].join('\n'))
-    }
     return delay([
-      'supplier_id,supplier_name,canonical_item_number,supplier_item_number,units_per_order',
-      'sup-misumi,MISUMI,ER2,ER2-P4,4',
-      'sup-thorlabs,Thorlabs Japan,MK-44,MK44-BX,10',
+      'canonical_item_number,description,manufacturer,category,default_supplier_id,supplier_id,supplier_name,supplier_item_number,units_per_order,note',
+      'ER2,Control relay,Omron,Relay,sup-misumi,sup-misumi,MISUMI,ER2-P4,4,Standard relay used in powerboard assemblies',
+      'MK-44,Terminal block 4P,Phoenix Contact,Terminal Block,sup-thorlabs,sup-thorlabs,Thorlabs Japan,MK44-BX,10,Common terminal block',
     ].join('\n'))
   }
 }

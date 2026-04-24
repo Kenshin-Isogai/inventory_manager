@@ -136,6 +136,6 @@ INSERT INTO reservations (id, item_id, device_scope_id, quantity, status, reques
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO import_jobs (id, import_type, status, file_name, summary) VALUES
-    ('imp-001', 'items', 'completed', 'items_master_20260422.csv', '{"inserted": 3, "updated": 0}'::jsonb),
-    ('imp-002', 'aliases', 'pending', 'supplier_aliases_20260422.csv', '{"rows": 14}'::jsonb)
+    ('imp-001', 'items_with_aliases', 'completed', 'items_with_aliases_20260422.csv', '{"item_inserted": 3, "item_updated": 0, "alias_inserted": 2, "alias_updated": 0, "alias_only": 0}'::jsonb),
+    ('imp-002', 'items_with_aliases', 'completed', 'alias_updates_20260422.csv', '{"item_inserted": 0, "item_updated": 0, "alias_inserted": 1, "alias_updated": 13, "alias_only": 14}'::jsonb)
 ON CONFLICT (id) DO NOTHING;

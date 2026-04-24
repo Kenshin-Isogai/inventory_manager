@@ -19,7 +19,7 @@ import { useMasterData } from '@/hooks/useMasterData'
 import { useScopeSystems } from '@/hooks/useScopeSystems'
 import { useProcurementProjects } from '@/hooks/useProcurementProjects'
 import { approveUser, deleteScopeSystem, exportMasterDataCSV, importMasterDataCSV, refreshProcurementProjects, rejectUser, upsertScopeSystem } from '@/lib/mockApi'
-import type { RoleKey } from '@/types'
+import type { ImportType, RoleKey } from '@/types'
 
 type AdminPageProps = {
   initialTab?: 'overview' | 'users' | 'roles' | 'master-data'
@@ -42,7 +42,7 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
   const [systemStatus, setSystemStatus] = useState('active')
   const [savingSystem, setSavingSystem] = useState(false)
 
-  async function handleExport(exportType: 'items' | 'aliases') {
+  async function handleExport(exportType: ImportType) {
     const csv = await exportMasterDataCSV(exportType)
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
@@ -54,7 +54,7 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
     setMessage(`Exported ${exportType}.csv`)
   }
 
-  async function handleImport(importType: 'items' | 'aliases', event: ChangeEvent<HTMLInputElement>) {
+  async function handleImport(importType: ImportType, event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) {
       return
@@ -444,12 +444,12 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex gap-2">
-                    <Button onClick={() => void handleExport('items')}>Export CSV</Button>
+                    <Button onClick={() => void handleExport('items_with_aliases')}>Export CSV</Button>
                     <Label className="flex items-center cursor-pointer">
                       <Input
                         type="file"
                         accept=".csv,text/csv"
-                        onChange={(event) => void handleImport('items', event)}
+                        onChange={(event) => void handleImport('items_with_aliases', event)}
                         className="hidden"
                       />
                       <Button variant="outline" type="button">Import CSV</Button>
@@ -541,19 +541,6 @@ export function AdminPage({ initialTab = 'overview' }: AdminPageProps) {
                   <CardTitle>Supplier Aliases</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="flex gap-2 mb-4">
-                    <Button onClick={() => void handleExport('aliases')}>Export CSV</Button>
-                    <Label className="flex items-center cursor-pointer">
-                      <Input
-                        type="file"
-                        accept=".csv,text/csv"
-                        onChange={(event) => void handleImport('aliases', event)}
-                        className="hidden"
-                      />
-                      <Button variant="outline" type="button">Import CSV</Button>
-                    </Label>
-                  </div>
-
                   {message && <p className="text-sm text-green-600">{message}</p>}
 
                   <div className="border rounded-lg overflow-hidden">
