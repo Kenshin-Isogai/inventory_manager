@@ -24,6 +24,7 @@ func (r *Repository) Requirements(ctx context.Context, device, scope string) (Re
 			i.canonical_item_number,
 			i.description,
 			sir.quantity,
+			sir.needed_by_at,
 			sir.note
 		FROM scope_item_requirements sir
 		JOIN device_scopes ds ON ds.id = sir.scope_id
@@ -40,6 +41,7 @@ func (r *Repository) Requirements(ctx context.Context, device, scope string) (Re
 	result := RequirementList{Rows: []RequirementSummary{}}
 	for rows.Next() {
 		var row RequirementSummary
+		var neededBy sql.NullTime
 		if err := rows.Scan(
 			&row.ID,
 			&row.Device,
@@ -48,10 +50,12 @@ func (r *Repository) Requirements(ctx context.Context, device, scope string) (Re
 			&row.ItemNumber,
 			&row.Description,
 			&row.Quantity,
+			&neededBy,
 			&row.Note,
 		); err != nil {
 			return RequirementList{}, fmt.Errorf("scan requirement: %w", err)
 		}
+		row.NeededByAt = nullableDateString(neededBy)
 		result.Rows = append(result.Rows, row)
 	}
 	return result, rows.Err()
@@ -68,9 +72,9 @@ func (r *Repository) UpsertRequirement(ctx context.Context, input RequirementUps
 	if id == "" {
 		id = fmt.Sprintf("req-%d", time.Now().UnixNano())
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO scope_item_requirements (id, scope_id, item_id, quantity, note, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-		`, id, input.DeviceScopeID, input.ItemID, input.Quantity, input.Note); err != nil {
+			INSERT INTO scope_item_requirements (id, scope_id, item_id, quantity, needed_by_at, note, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, NULLIF($5, '')::timestamptz, $6, NOW(), NOW())
+		`, id, input.DeviceScopeID, input.ItemID, input.Quantity, input.NeededByAt, input.Note); err != nil {
 			return RequirementSummary{}, fmt.Errorf("insert requirement: %w", err)
 		}
 	} else {
@@ -79,10 +83,11 @@ func (r *Repository) UpsertRequirement(ctx context.Context, input RequirementUps
 			SET scope_id = $2,
 			    item_id = $3,
 			    quantity = $4,
-			    note = $5,
+			    needed_by_at = NULLIF($5, '')::timestamptz,
+			    note = $6,
 			    updated_at = NOW()
 			WHERE id = $1
-		`, id, input.DeviceScopeID, input.ItemID, input.Quantity, input.Note); err != nil {
+		`, id, input.DeviceScopeID, input.ItemID, input.Quantity, input.NeededByAt, input.Note); err != nil {
 			return RequirementSummary{}, fmt.Errorf("update requirement: %w", err)
 		}
 	}
@@ -96,6 +101,7 @@ func (r *Repository) UpsertRequirement(ctx context.Context, input RequirementUps
 			i.canonical_item_number,
 			i.description,
 			sir.quantity,
+			sir.needed_by_at,
 			sir.note
 		FROM scope_item_requirements sir
 		JOIN device_scopes ds ON ds.id = sir.scope_id
@@ -103,6 +109,7 @@ func (r *Repository) UpsertRequirement(ctx context.Context, input RequirementUps
 		WHERE sir.id = $1
 	`, id)
 	var result RequirementSummary
+	var neededBy sql.NullTime
 	if err := row.Scan(
 		&result.ID,
 		&result.Device,
@@ -111,10 +118,12 @@ func (r *Repository) UpsertRequirement(ctx context.Context, input RequirementUps
 		&result.ItemNumber,
 		&result.Description,
 		&result.Quantity,
+		&neededBy,
 		&result.Note,
 	); err != nil {
 		return RequirementSummary{}, fmt.Errorf("reload requirement: %w", err)
 	}
+	result.NeededByAt = nullableDateString(neededBy)
 
 	if err := recordAuditEventTx(ctx, tx, "", "requirement.upserted", "scope_item_requirement", id, map[string]any{
 		"scopeId":  input.DeviceScopeID,
@@ -164,9 +173,9 @@ func (r *Repository) BatchUpsertRequirements(ctx context.Context, input Requirem
 			// Update existing
 			if _, err := tx.ExecContext(ctx, `
 				UPDATE scope_item_requirements
-				SET quantity = $2, note = $3, updated_at = NOW()
+				SET quantity = $2, needed_by_at = NULLIF($3, '')::timestamptz, note = $4, updated_at = NOW()
 				WHERE id = $1
-			`, existingID, row.Quantity, row.Note); err != nil {
+			`, existingID, row.Quantity, row.NeededByAt, row.Note); err != nil {
 				rr.Status = "error"
 				rr.Error = fmt.Sprintf("update requirement: %s", err.Error())
 				result.Errored++
@@ -179,9 +188,9 @@ func (r *Repository) BatchUpsertRequirements(ctx context.Context, input Requirem
 			// Insert new
 			newID := fmt.Sprintf("req-%d-%d", time.Now().UnixNano(), i)
 			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO scope_item_requirements (id, scope_id, item_id, quantity, note, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-			`, newID, input.DeviceScopeID, row.ItemID, row.Quantity, row.Note); err != nil {
+				INSERT INTO scope_item_requirements (id, scope_id, item_id, quantity, needed_by_at, note, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, NULLIF($5, '')::timestamptz, $6, NOW(), NOW())
+			`, newID, input.DeviceScopeID, row.ItemID, row.Quantity, row.NeededByAt, row.Note); err != nil {
 				rr.Status = "error"
 				rr.Error = fmt.Sprintf("insert requirement: %s", err.Error())
 				result.Errored++
@@ -195,20 +204,22 @@ func (r *Repository) BatchUpsertRequirements(ctx context.Context, input Requirem
 
 		// Reload summary
 		reloadRow := tx.QueryRowContext(ctx, `
-			SELECT sir.id, ds.device_key, ds.scope_key, i.id, i.canonical_item_number, i.description, sir.quantity, sir.note
+			SELECT sir.id, ds.device_key, ds.scope_key, i.id, i.canonical_item_number, i.description, sir.quantity, sir.needed_by_at, sir.note
 			FROM scope_item_requirements sir
 			JOIN device_scopes ds ON ds.id = sir.scope_id
 			JOIN items i ON i.id = sir.item_id
 			WHERE sir.id = $1
 		`, existingID)
 		var summary RequirementSummary
-		if err := reloadRow.Scan(&summary.ID, &summary.Device, &summary.Scope, &summary.ItemID, &summary.ItemNumber, &summary.Description, &summary.Quantity, &summary.Note); err != nil {
+		var summaryNeededBy sql.NullTime
+		if err := reloadRow.Scan(&summary.ID, &summary.Device, &summary.Scope, &summary.ItemID, &summary.ItemNumber, &summary.Description, &summary.Quantity, &summaryNeededBy, &summary.Note); err != nil {
 			rr.Status = "error"
 			rr.Error = fmt.Sprintf("reload requirement: %s", err.Error())
 			result.Errored++
 			result.Rows = append(result.Rows, rr)
 			continue
 		}
+		summary.NeededByAt = nullableDateString(summaryNeededBy)
 		rr.Requirement = &summary
 
 		if err := recordAuditEventTx(ctx, tx, "", "requirement.upserted", "scope_item_requirement", existingID, map[string]any{
@@ -1368,6 +1379,11 @@ func (r *Repository) CreateReceipt(ctx context.Context, input ReceiptCreateInput
 		if err := incrementBalanceTx(ctx, tx, line.ItemID, line.LocationCode, line.Quantity); err != nil {
 			return ReceiptSummary{}, err
 		}
+		if line.PurchaseOrderLineID != "" {
+			if err := convertIncomingAllocationsOnReceiptTx(ctx, tx, line.PurchaseOrderLineID, line.ItemID, line.LocationCode, line.Quantity, emptyDefault(input.ReceivedBy, "local-user"), receiptID); err != nil {
+				return ReceiptSummary{}, err
+			}
+		}
 	}
 
 	if err := recordAuditEventTx(ctx, tx, input.ReceivedBy, "receipt.created", "receipt", receiptID, map[string]any{
@@ -1798,6 +1814,103 @@ func adjustReservedQuantityTx(ctx context.Context, tx *sql.Tx, itemID, locationC
 	return nil
 }
 
+func convertIncomingAllocationsOnReceiptTx(ctx context.Context, tx *sql.Tx, purchaseOrderLineID, itemID, locationCode string, receivedQuantity int, actorID, receiptID string) error {
+	if receivedQuantity <= 0 {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT ra.id, ra.reservation_id, ra.quantity
+		FROM reservation_allocations ra
+		JOIN reservations rv ON rv.id = ra.reservation_id
+		WHERE ra.purchase_order_line_id = $1
+		  AND ra.item_id = $2
+		  AND ra.status = 'allocated'
+		  AND ra.source_type = 'incoming_order'
+		  AND rv.status NOT IN ('cancelled', 'released')
+		ORDER BY rv.needed_by_at NULLS LAST, ra.allocated_at
+		FOR UPDATE OF ra
+	`, purchaseOrderLineID, itemID)
+	if err != nil {
+		return fmt.Errorf("query incoming allocations for receipt conversion: %w", err)
+	}
+	type incomingAllocation struct {
+		ID            string
+		ReservationID string
+		Quantity      int
+	}
+	allocations := []incomingAllocation{}
+	remaining := receivedQuantity
+	for rows.Next() && remaining > 0 {
+		var allocation incomingAllocation
+		if err := rows.Scan(&allocation.ID, &allocation.ReservationID, &allocation.Quantity); err != nil {
+			return fmt.Errorf("scan incoming allocation for receipt conversion: %w", err)
+		}
+		allocations = append(allocations, allocation)
+		remaining -= allocation.Quantity
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close incoming allocations for receipt conversion: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate incoming allocations for receipt conversion: %w", err)
+	}
+
+	remaining = receivedQuantity
+	for _, allocation := range allocations {
+		if remaining <= 0 {
+			break
+		}
+		portion := allocation.Quantity
+		if portion > remaining {
+			portion = remaining
+		}
+		if portion == allocation.Quantity {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE reservation_allocations
+				SET location_code = $2,
+				    source_type = 'stock',
+				    purchase_order_line_id = NULL,
+				    allocated_at = NOW(),
+				    note = TRIM(BOTH ' ' FROM CONCAT(note, ' converted from incoming order on receipt ', $3))
+				WHERE id = $1
+			`, allocation.ID, locationCode, receiptID); err != nil {
+				return fmt.Errorf("convert incoming allocation to stock: %w", err)
+			}
+		} else {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE reservation_allocations
+				SET quantity = quantity - $2
+				WHERE id = $1
+			`, allocation.ID, portion); err != nil {
+				return fmt.Errorf("reduce incoming allocation after partial receipt: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO reservation_allocations (id, reservation_id, item_id, location_code, quantity, status, source_type, allocated_at, note)
+				VALUES ($1, $2, $3, $4, $5, 'allocated', 'stock', NOW(), $6)
+			`, fmt.Sprintf("alloc-%d", time.Now().UnixNano()), allocation.ReservationID, itemID, locationCode, portion, "converted from incoming order on receipt "+receiptID); err != nil {
+				return fmt.Errorf("insert converted stock allocation: %w", err)
+			}
+		}
+		if err := adjustReservedQuantityTx(ctx, tx, itemID, locationCode, portion); err != nil {
+			return fmt.Errorf("reserve received stock for incoming allocation: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO inventory_events (
+				id, item_id, location_code, from_location_code, to_location_code, event_type, quantity_delta, note, device_scope_id,
+				actor_id, source_type, source_id, correlation_id, occurred_at
+			)
+			SELECT $1, $2, $3, '', $3, 'reserve_allocate', 0, $4, device_scope_id,
+			       $5, 'reservation', $6, $7, NOW()
+			FROM reservations
+			WHERE id = $6
+		`, fmt.Sprintf("evt-%d", time.Now().UnixNano()), itemID, locationCode, "Auto-converted incoming order allocation on receipt", actorID, allocation.ReservationID, receiptID+":"+allocation.ID); err != nil {
+			return fmt.Errorf("record converted allocation event: %w", err)
+		}
+		remaining -= portion
+	}
+	return nil
+}
+
 func (r *Repository) reservationDetail(ctx context.Context, db queryable, id string) (ReservationDetail, error) {
 	var detail ReservationDetail
 	var neededBy, plannedUse, holdUntil, fulfilledAt, releasedAt sql.NullTime
@@ -2020,6 +2133,13 @@ func nullableTimeString(value sql.NullTime) string {
 		return ""
 	}
 	return value.Time.UTC().Format(time.RFC3339)
+}
+
+func nullableDateString(value sql.NullTime) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.Time.UTC().Format("2006-01-02")
 }
 
 func nullTimeArg(value sql.NullTime) any {

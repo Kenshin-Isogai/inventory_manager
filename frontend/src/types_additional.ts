@@ -128,6 +128,7 @@ export type BulkReservationPreviewRow = {
   itemNumber: string
   manufacturer: string
   description: string
+  neededByAt: string
   requiredQuantity: number
   allocFromStock: number
   allocFromStockLocs: { locationCode: string; quantity: number }[]
@@ -177,6 +178,7 @@ export type RequirementsImportPreviewRow = {
   manufacturer: string
   description: string
   quantity: number
+  neededByAt: string
   status: string
   message: string
   itemId: string

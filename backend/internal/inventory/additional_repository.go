@@ -488,6 +488,7 @@ func (r *Repository) RequirementsExportCSV(ctx context.Context, device, scope st
 			i.canonical_item_number,
 			COALESCE(i.description, '') AS description,
 			sir.quantity,
+			sir.needed_by_at,
 			COALESCE(sir.note, '') AS note
 		FROM scope_item_requirements sir
 		JOIN device_scopes ds ON ds.id = sir.scope_id
@@ -506,14 +507,15 @@ func (r *Repository) RequirementsExportCSV(ctx context.Context, device, scope st
 
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
-	_ = w.Write([]string{"device", "scope", "manufacturer", "item_number", "description", "quantity", "note"})
+	_ = w.Write([]string{"device", "scope", "manufacturer", "item_number", "description", "quantity", "needed_by_at", "note"})
 	for rows.Next() {
 		var dev, sc, mfr, item, desc, note string
 		var qty int
-		if err := rows.Scan(&dev, &sc, &mfr, &item, &desc, &qty, &note); err != nil {
+		var neededBy sql.NullTime
+		if err := rows.Scan(&dev, &sc, &mfr, &item, &desc, &qty, &neededBy, &note); err != nil {
 			return "", fmt.Errorf("scan requirements export: %w", err)
 		}
-		_ = w.Write([]string{dev, sc, mfr, item, desc, strconv.Itoa(qty), note})
+		_ = w.Write([]string{dev, sc, mfr, item, desc, strconv.Itoa(qty), nullableDateString(neededBy), note})
 	}
 	w.Flush()
 	return buf.String(), rows.Err()
@@ -556,6 +558,7 @@ func (r *Repository) RequirementsImportPreview(ctx context.Context, fileName str
 		row.Manufacturer = field(rec, "manufacturer", "manufacturer_name")
 		row.ItemNumber = field(rec, "item_number", "canonical_item_number")
 		row.Description = field(rec, "description", "item_description")
+		row.NeededByAt = field(rec, "needed_by_at", "needed_by", "neededByAt")
 		qtyRaw := field(rec, "quantity", "required_quantity")
 		if row.DeviceKey == "" || row.ScopeKey == "" || row.ItemNumber == "" || qtyRaw == "" {
 			row.Status = "error"
@@ -571,6 +574,14 @@ func (r *Repository) RequirementsImportPreview(ctx context.Context, fileName str
 			continue
 		}
 		row.Quantity = qty
+		if row.NeededByAt != "" {
+			if _, err := time.Parse("2006-01-02", row.NeededByAt); err != nil {
+				row.Status = "error"
+				row.Message = "invalid needed_by_at (expected YYYY-MM-DD)"
+				result.Rows = append(result.Rows, row)
+				continue
+			}
+		}
 
 		// Check scope exists
 		var scopeID string
@@ -599,7 +610,7 @@ func (r *Repository) RequirementsImportPreview(ctx context.Context, fileName str
 		} else {
 			row.ItemID = itemID
 			row.ItemRegistered = true
-			row.Status = "ok"
+			row.Status = "valid"
 		}
 		result.Rows = append(result.Rows, row)
 	}
@@ -630,12 +641,13 @@ func (r *Repository) RequirementsImportApply(ctx context.Context, fileName strin
 		}
 		id := uuid.New().String()
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO scope_item_requirements (id, scope_id, item_id, quantity, note)
-			VALUES ($1, $2, $3, $4, '')
+			INSERT INTO scope_item_requirements (id, scope_id, item_id, quantity, needed_by_at, note)
+			VALUES ($1, $2, $3, $4, NULLIF($5, '')::timestamptz, '')
 			ON CONFLICT (scope_id, item_id)
 			DO UPDATE SET quantity = scope_item_requirements.quantity + EXCLUDED.quantity,
+			             needed_by_at = COALESCE(EXCLUDED.needed_by_at, scope_item_requirements.needed_by_at),
 			             updated_at = NOW()
-		`, id, row.ScopeID, row.ItemID, row.Quantity)
+		`, id, row.ScopeID, row.ItemID, row.Quantity, row.NeededByAt)
 		if err != nil {
 			result.Errored++
 			continue
@@ -1107,6 +1119,7 @@ func (r *Repository) BulkReservationPreview(ctx context.Context, scopeID string)
 			COALESCE(m.name, '') AS manufacturer,
 			COALESCE(i.description, '') AS description,
 			sir.quantity AS required_qty,
+			sir.needed_by_at,
 			COALESCE(existing_res.reserved, 0) AS already_reserved
 		FROM scope_item_requirements sir
 		JOIN items i ON i.id = sir.item_id
@@ -1131,10 +1144,12 @@ func (r *Repository) BulkReservationPreview(ctx context.Context, scopeID string)
 	for rows.Next() {
 		var row BulkReservationPreviewRow
 		var alreadyReserved int
+		var neededBy sql.NullTime
 		if err := rows.Scan(&row.ItemID, &row.ItemNumber, &row.Manufacturer, &row.Description,
-			&row.RequiredQuantity, &alreadyReserved); err != nil {
+			&row.RequiredQuantity, &neededBy, &alreadyReserved); err != nil {
 			return BulkReservationPreview{}, fmt.Errorf("scan bulk preview: %w", err)
 		}
+		row.NeededByAt = nullableDateString(neededBy)
 		needed := row.RequiredQuantity - alreadyReserved
 		row.RequiredQuantity = needed
 		row.AllocFromStockLocs = []StockAllocation{}
@@ -1177,18 +1192,29 @@ func (r *Repository) BulkReservationPreview(ctx context.Context, scopeID string)
 		balRows.Close()
 
 		// Check incoming orders
-		if remaining > 0 {
+		if remaining > 0 && neededBy.Valid {
 			polRows, err := r.db.QueryContext(ctx, `
 				SELECT pol.id, po.order_number, pol.expected_arrival_date,
-				       pol.ordered_quantity - pol.received_quantity AS pending
+				       pol.ordered_quantity - pol.received_quantity - COALESCE(existing_alloc.allocated, 0) AS pending
 				FROM purchase_order_lines pol
 				JOIN purchase_orders po ON po.id = pol.purchase_order_id
 				JOIN procurement_lines pl ON pl.id = pol.procurement_line_id
+				LEFT JOIN (
+					SELECT ra.purchase_order_line_id, SUM(ra.quantity) AS allocated
+					FROM reservation_allocations ra
+					JOIN reservations rv ON rv.id = ra.reservation_id
+					WHERE ra.status = 'allocated'
+					  AND ra.source_type = 'incoming_order'
+					  AND rv.status NOT IN ('cancelled', 'released')
+					GROUP BY ra.purchase_order_line_id
+				) existing_alloc ON existing_alloc.purchase_order_line_id = pol.id
 				WHERE pl.item_id = $1
 				  AND pol.status NOT IN ('cancelled', 'received')
-				  AND (pol.ordered_quantity - pol.received_quantity) > 0
+				  AND pol.expected_arrival_date IS NOT NULL
+				  AND pol.expected_arrival_date <= $2::date
+				  AND (pol.ordered_quantity - pol.received_quantity - COALESCE(existing_alloc.allocated, 0)) > 0
 				ORDER BY pol.expected_arrival_date NULLS LAST
-			`, row.ItemID)
+			`, row.ItemID, neededBy.Time)
 			if err != nil {
 				return BulkReservationPreview{}, fmt.Errorf("query PO lines for %s: %w", row.ItemID, err)
 			}
@@ -1264,6 +1290,9 @@ func (r *Repository) BulkReservationConfirm(ctx context.Context, input BulkReser
 
 		var neededBy interface{} = nil
 		if row.NeededByAt != "" {
+			if _, err := time.Parse("2006-01-02", row.NeededByAt); err != nil {
+				return BulkReservationResult{}, fmt.Errorf("invalid neededByAt for item %s: expected YYYY-MM-DD", row.ItemID)
+			}
 			neededBy = row.NeededByAt
 		}
 
@@ -1279,6 +1308,18 @@ func (r *Repository) BulkReservationConfirm(ctx context.Context, input BulkReser
 		for _, sa := range row.StockAllocations {
 			if sa.Quantity <= 0 {
 				continue
+			}
+			var available int
+			if err := tx.QueryRowContext(ctx, `
+				SELECT available_quantity
+				FROM inventory_balances
+				WHERE item_id = $1 AND location_code = $2
+				FOR UPDATE
+			`, row.ItemID, sa.LocationCode).Scan(&available); err != nil {
+				return BulkReservationResult{}, fmt.Errorf("lock stock allocation: %w", err)
+			}
+			if available < sa.Quantity {
+				return BulkReservationResult{}, fmt.Errorf("insufficient stock for item %s at %s: requested %d, available %d", row.ItemID, sa.LocationCode, sa.Quantity, available)
 			}
 			allocID := uuid.New().String()
 			_, err := tx.ExecContext(ctx, `
@@ -1307,6 +1348,42 @@ func (r *Repository) BulkReservationConfirm(ctx context.Context, input BulkReser
 		for _, oa := range row.OrderAllocations {
 			if oa.Quantity <= 0 {
 				continue
+			}
+			var pending int
+			var expected sql.NullTime
+			if err := tx.QueryRowContext(ctx, `
+				SELECT pol.ordered_quantity - pol.received_quantity - COALESCE(existing_alloc.allocated, 0) AS pending,
+				       pol.expected_arrival_date
+				FROM purchase_order_lines pol
+				JOIN procurement_lines pl ON pl.id = pol.procurement_line_id
+				LEFT JOIN (
+					SELECT ra.purchase_order_line_id, SUM(ra.quantity) AS allocated
+					FROM reservation_allocations ra
+					JOIN reservations rv ON rv.id = ra.reservation_id
+					WHERE ra.status = 'allocated'
+					  AND ra.source_type = 'incoming_order'
+					  AND ra.purchase_order_line_id IS NOT NULL
+					  AND rv.status NOT IN ('cancelled', 'released')
+					GROUP BY ra.purchase_order_line_id
+				) existing_alloc ON existing_alloc.purchase_order_line_id = pol.id
+				WHERE pol.id = $1
+				  AND pl.item_id = $2
+				  AND pol.status NOT IN ('cancelled', 'received')
+				FOR UPDATE OF pol
+			`, oa.PurchaseOrderLineID, row.ItemID).Scan(&pending, &expected); err != nil {
+				return BulkReservationResult{}, fmt.Errorf("lock incoming allocation: %w", err)
+			}
+			if !expected.Valid {
+				return BulkReservationResult{}, fmt.Errorf("purchase order line %s has no expected arrival date", oa.PurchaseOrderLineID)
+			}
+			if row.NeededByAt != "" {
+				neededDate, _ := time.Parse("2006-01-02", row.NeededByAt)
+				if expected.Time.After(neededDate) {
+					return BulkReservationResult{}, fmt.Errorf("purchase order line %s arrives after neededByAt for item %s", oa.PurchaseOrderLineID, row.ItemID)
+				}
+			}
+			if pending < oa.Quantity {
+				return BulkReservationResult{}, fmt.Errorf("insufficient incoming order quantity for line %s: requested %d, available %d", oa.PurchaseOrderLineID, oa.Quantity, pending)
 			}
 			allocID := uuid.New().String()
 			_, err := tx.ExecContext(ctx, `

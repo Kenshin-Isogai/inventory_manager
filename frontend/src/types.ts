@@ -104,6 +104,7 @@ export type RequirementSummary = {
   itemNumber: string
   description: string
   quantity: number
+  neededByAt: string
   note: string
 }
 
@@ -116,12 +117,14 @@ export type RequirementUpsertInput = {
   deviceScopeId: string
   itemId: string
   quantity: number
+  neededByAt: string
   note: string
 }
 
 export type RequirementBatchUpsertRow = {
   itemId: string
   quantity: number
+  neededByAt: string
   note: string
 }
 
@@ -844,6 +847,7 @@ export type BulkReservationPreviewRow = {
   itemNumber: string
   manufacturer: string
   description: string
+  neededByAt: string
   requiredQuantity: number
   allocFromStock: number
   allocFromStockLocs: { locationCode: string; quantity: number }[]
@@ -893,6 +897,7 @@ export type RequirementsImportPreviewRow = {
   manufacturer: string
   description: string
   quantity: number
+  neededByAt: string
   status: string
   message: string
   itemId: string
@@ -930,4 +935,3 @@ export type MasterItemRecord = {
   note: string
   lifecycleStatus: string
 }
-

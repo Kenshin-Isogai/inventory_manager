@@ -1056,6 +1056,7 @@ export async function fetchRequirements(device?: string, scope?: string) {
         itemNumber: row.itemNumber,
         description: row.description,
         quantity: row.quantity,
+        neededByAt: '2026-05-15',
         note: 'Mock requirement derived from shortage data',
       }))
     return delay({ rows })

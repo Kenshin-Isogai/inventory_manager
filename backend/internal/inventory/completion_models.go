@@ -8,6 +8,7 @@ type RequirementSummary struct {
 	ItemNumber  string `json:"itemNumber"`
 	Description string `json:"description"`
 	Quantity    int    `json:"quantity"`
+	NeededByAt  string `json:"neededByAt"`
 	Note        string `json:"note"`
 }
 
@@ -20,32 +21,34 @@ type RequirementUpsertInput struct {
 	DeviceScopeID string `json:"deviceScopeId"`
 	ItemID        string `json:"itemId"`
 	Quantity      int    `json:"quantity"`
+	NeededByAt    string `json:"neededByAt"`
 	Note          string `json:"note"`
 }
 
 type RequirementBatchUpsertInput struct {
-	DeviceScopeID string                        `json:"deviceScopeId"`
-	Rows          []RequirementBatchUpsertRow   `json:"rows"`
+	DeviceScopeID string                      `json:"deviceScopeId"`
+	Rows          []RequirementBatchUpsertRow `json:"rows"`
 }
 
 type RequirementBatchUpsertRow struct {
-	ItemID   string `json:"itemId"`
-	Quantity int    `json:"quantity"`
-	Note     string `json:"note"`
+	ItemID     string `json:"itemId"`
+	Quantity   int    `json:"quantity"`
+	NeededByAt string `json:"neededByAt"`
+	Note       string `json:"note"`
 }
 
 type RequirementBatchUpsertResultRow struct {
-	Index      int                `json:"index"`
-	Status     string             `json:"status"` // "created", "updated", "error"
+	Index       int                 `json:"index"`
+	Status      string              `json:"status"` // "created", "updated", "error"
 	Requirement *RequirementSummary `json:"requirement,omitempty"`
-	Error      string             `json:"error,omitempty"`
-	Duplicate  bool               `json:"duplicate"` // true if scope×item already existed
+	Error       string              `json:"error,omitempty"`
+	Duplicate   bool                `json:"duplicate"` // true if scope×item already existed
 }
 
 type RequirementBatchUpsertResult struct {
-	Created int                              `json:"created"`
-	Updated int                              `json:"updated"`
-	Errored int                              `json:"errored"`
+	Created int                               `json:"created"`
+	Updated int                               `json:"updated"`
+	Errored int                               `json:"errored"`
 	Rows    []RequirementBatchUpsertResultRow `json:"rows"`
 }
 
@@ -550,6 +553,7 @@ type BulkReservationPreviewRow struct {
 	ItemNumber         string            `json:"itemNumber"`
 	Manufacturer       string            `json:"manufacturer"`
 	Description        string            `json:"description"`
+	NeededByAt         string            `json:"neededByAt"`
 	RequiredQuantity   int               `json:"requiredQuantity"`
 	AllocFromStock     int               `json:"allocFromStock"`
 	AllocFromStockLocs []StockAllocation `json:"allocFromStockLocs"`
@@ -637,6 +641,7 @@ type RequirementsImportPreviewRow struct {
 	Manufacturer   string `json:"manufacturer"`
 	Description    string `json:"description"`
 	Quantity       int    `json:"quantity"`
+	NeededByAt     string `json:"neededByAt"`
 	Status         string `json:"status"`
 	Message        string `json:"message"`
 	ItemID         string `json:"itemId"`

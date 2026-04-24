@@ -27,12 +27,13 @@ import { batchUpsertRequirements, upsertRequirement } from '@/lib/mockApi'
 import type { BulkReservationPreviewResponse, MasterItemRecord, RequirementSummary, RequirementsImportPreviewResponse } from '@/types'
 
 const REQUIREMENTS_TEMPLATE =
-  'device,scope,manufacturer,item_number,description,quantity,note\nER2,powerboard,Omron,ER2,Control relay,10,Initial build demand\n'
+  'device,scope,manufacturer,item_number,description,quantity,needed_by_at,note\nER2,powerboard,Omron,ER2,Control relay,10,2026-05-15,Initial build demand\n'
 
 type RequirementFormRow = {
   key: string
   itemId: string
   quantity: number
+  neededByAt: string
   note: string
 }
 
@@ -42,7 +43,7 @@ function nextRowKey() {
 }
 
 function createEmptyRow(): RequirementFormRow {
-  return { key: nextRowKey(), itemId: '', quantity: 1, note: '' }
+  return { key: nextRowKey(), itemId: '', quantity: 1, neededByAt: '', note: '' }
 }
 
 function csvEscape(value: string | number) {
@@ -62,10 +63,6 @@ function buildMissingItemsCSV(preview: RequirementsImportPreviewResponse) {
     'canonical_item_number,description,manufacturer,category',
     ...itemNumbers.map((itemNumber) => [itemNumber, '', '', ''].map(csvEscape).join(',')),
   ].join('\n')
-}
-
-function todayDate() {
-  return new Date().toISOString().slice(0, 10)
 }
 
 function getBadgeVariant(status: string) {
@@ -141,6 +138,7 @@ export function OperatorDashboardPage() {
       row.scope.toLowerCase().includes(q) ||
       row.itemNumber.toLowerCase().includes(q) ||
       row.description.toLowerCase().includes(q) ||
+      row.neededByAt.toLowerCase().includes(q) ||
       row.note.toLowerCase().includes(q)
     )
   })
@@ -167,7 +165,7 @@ export function OperatorDashboardPage() {
     const matchedScope = scopes.find((candidate) => candidate.deviceKey === row.device && candidate.scopeKey === row.scope)
     setSelectedRequirement(row)
     setFormScopeId(matchedScope?.id ?? '')
-    setFormRows([{ key: nextRowKey(), itemId: row.itemId, quantity: row.quantity, note: row.note }])
+    setFormRows([{ key: nextRowKey(), itemId: row.itemId, quantity: row.quantity, neededByAt: row.neededByAt, note: row.note }])
   }
 
   function resetForm() {
@@ -253,6 +251,7 @@ export function OperatorDashboardPage() {
           deviceScopeId: formScopeId,
           itemId: formRows[0]?.itemId ?? '',
           quantity: formRows[0]?.quantity ?? 1,
+          neededByAt: formRows[0]?.neededByAt ?? '',
           note: formRows[0]?.note ?? '',
         })
         await Promise.all([mutate(['requirements', device, scope]), mutate(['scope-overview', device])])
@@ -267,7 +266,7 @@ export function OperatorDashboardPage() {
     }
 
     // Batch mode - filter valid rows
-    const validRows = formRows.filter((row) => row.itemId && row.quantity > 0)
+    const validRows = formRows.filter((row) => row.itemId && row.quantity > 0 && row.neededByAt)
     if (validRows.length === 0) return
 
     // Check for duplicates
@@ -288,7 +287,7 @@ export function OperatorDashboardPage() {
     try {
       const result = await batchUpsertRequirements({
         deviceScopeId: formScopeId,
-        rows: validRows.map((row) => ({ itemId: row.itemId, quantity: row.quantity, note: row.note })),
+        rows: validRows.map((row) => ({ itemId: row.itemId, quantity: row.quantity, neededByAt: row.neededByAt, note: row.note })),
       })
       await Promise.all([mutate(['requirements', device, scope]), mutate(['scope-overview', device])])
       const parts: string[] = []
@@ -388,7 +387,7 @@ export function OperatorDashboardPage() {
             orderAllocations: row.allocFromOrderLocs,
             purpose: 'Requirement bulk reservation',
             priority: 'normal',
-            neededByAt: todayDate(),
+            neededByAt: row.neededByAt,
           })),
       })
       await Promise.all([mutate(['reservations', device, scope]), mutate(['requirements', device, scope]), mutate(['scope-overview', device])])
@@ -464,6 +463,7 @@ export function OperatorDashboardPage() {
                     <TableHead>Item</TableHead>
                     <TableHead>Description</TableHead>
                     <TableHead className="text-right">Qty</TableHead>
+                    <TableHead>Needed</TableHead>
                     <TableHead>Note</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -477,12 +477,13 @@ export function OperatorDashboardPage() {
                       </TableCell>
                       <TableCell className="max-w-[16rem] truncate text-sm text-muted-foreground">{row.description}</TableCell>
                       <TableCell className="text-right tabular-nums">{row.quantity}</TableCell>
+                      <TableCell className="font-mono text-sm">{row.neededByAt || '—'}</TableCell>
                       <TableCell className="max-w-[18rem] truncate text-sm text-muted-foreground">{row.note || '—'}</TableCell>
                     </TableRow>
                   ))}
                   {filteredRows.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                      <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
                         No requirements found.
                       </TableCell>
                     </TableRow>
@@ -552,6 +553,13 @@ export function OperatorDashboardPage() {
                           />
                           <Input
                             className="h-9 w-24 text-xs"
+                            type="date"
+                            value={formRow.neededByAt}
+                            onChange={(e) => updateFormRow(formRow.key, 'neededByAt', e.target.value)}
+                            aria-label="Needed by"
+                          />
+                          <Input
+                            className="h-9 w-24 text-xs"
                             placeholder="Note"
                             value={formRow.note}
                             onChange={(e) => updateFormRow(formRow.key, 'note', e.target.value)}
@@ -583,7 +591,7 @@ export function OperatorDashboardPage() {
                   <Button
                     type="submit"
                     className="flex-1"
-                    disabled={!formScopeId || formRows.every((r) => !r.itemId) || isSaving}
+                    disabled={!formScopeId || formRows.every((r) => !r.itemId) || formRows.some((r) => r.itemId && !r.neededByAt) || isSaving}
                   >
                     {isSaving ? 'Saving...' : selectedRequirement ? 'Update' : `Save All (${formRows.filter((r) => r.itemId).length})`}
                   </Button>
@@ -694,6 +702,7 @@ export function OperatorDashboardPage() {
                 <TableRow>
                   <TableHead>Item</TableHead>
                   <TableHead className="text-right">Required</TableHead>
+                  <TableHead>Needed</TableHead>
                   <TableHead className="text-right">From stock</TableHead>
                   <TableHead className="text-right">From orders</TableHead>
                   <TableHead className="text-right">Unallocated</TableHead>
@@ -708,6 +717,7 @@ export function OperatorDashboardPage() {
                       <div className="text-xs text-muted-foreground">{row.description}</div>
                     </TableCell>
                     <TableCell className="text-right">{row.requiredQuantity}</TableCell>
+                    <TableCell className="font-mono text-xs">{row.neededByAt || '—'}</TableCell>
                     <TableCell className="text-right">{row.allocFromStock}</TableCell>
                     <TableCell className="text-right">{row.allocFromOrders}</TableCell>
                     <TableCell className="text-right">{row.unallocated > 0 ? <Badge variant="destructive">{row.unallocated}</Badge> : 0}</TableCell>
