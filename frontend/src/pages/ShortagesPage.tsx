@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useImports } from '@/hooks/useImports'
 import { useEnhancedShortages } from '@/hooks/useEnhancedShortages'
 import { useDeviceScopes } from '@/hooks/useDeviceScopes'
+import { ShortageTimelineView } from '@/components/ShortageTimelineView'
 import { DeviceScopeFilters } from '@/components/context/DeviceScopeFilters'
 import { ItemInfoPopover } from '@/components/ItemInfoPopover'
 import { CollapsibleFilterBar } from '@/components/CollapsibleFilterBar'
@@ -165,6 +166,10 @@ export function ShortagesPage() {
           </div>
         </CardContent>
       </Card>
+
+      {device && scope && (
+        <ShortageTimelineView device={device} scope={scope} />
+      )}
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">

@@ -44,19 +44,19 @@ describe('API response envelope', () => {
 // Fetch error handling
 // ============================================================
 describe('API error handling', () => {
-  const originalFetch = global.fetch;
+  const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
     // Mock fetch
-    global.fetch = vi.fn();
+    globalThis.fetch = vi.fn();
   });
 
   afterEach(() => {
-    global.fetch = originalFetch;
+    globalThis.fetch = originalFetch;
   });
 
   it('handles network timeout gracefully', async () => {
-    vi.mocked(global.fetch).mockRejectedValueOnce(new Error('network timeout'));
+    vi.mocked(globalThis.fetch).mockRejectedValueOnce(new Error('network timeout'));
 
     try {
       await fetch('/api/v1/inventory/overview');
@@ -67,7 +67,7 @@ describe('API error handling', () => {
   });
 
   it('handles 400 error response with error field', async () => {
-    vi.mocked(global.fetch).mockResolvedValueOnce(
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
       new Response(JSON.stringify({ error: 'invalid input' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
@@ -81,7 +81,7 @@ describe('API error handling', () => {
   });
 
   it('handles 500 server error', async () => {
-    vi.mocked(global.fetch).mockResolvedValueOnce(
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
       new Response(JSON.stringify({ error: 'internal server error' }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
@@ -93,7 +93,7 @@ describe('API error handling', () => {
   });
 
   it('handles connection refused', async () => {
-    vi.mocked(global.fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    vi.mocked(globalThis.fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'));
 
     try {
       await fetch('/api/v1/inventory/overview');
