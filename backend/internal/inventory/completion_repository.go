@@ -1550,27 +1550,46 @@ func (r *Repository) UndoImport(ctx context.Context, id, actor string) (ImportDe
 	if err != nil {
 		return ImportDetail{}, fmt.Errorf("query undo import effects: %w", err)
 	}
-	defer effects.Close()
+	type importEffect struct {
+		entityType string
+		entityID   string
+		effectType string
+		before     string
+	}
+	var undoEffects []importEffect
 	for effects.Next() {
-		var entityType, entityID, effectType, beforeState string
-		if err := effects.Scan(&entityType, &entityID, &effectType, &beforeState); err != nil {
+		var effect importEffect
+		if err := effects.Scan(&effect.entityType, &effect.entityID, &effect.effectType, &effect.before); err != nil {
 			return ImportDetail{}, fmt.Errorf("scan undo import effect: %w", err)
 		}
+		undoEffects = append(undoEffects, effect)
+	}
+	if err := effects.Close(); err != nil {
+		return ImportDetail{}, fmt.Errorf("close undo import effects: %w", err)
+	}
+	if err := effects.Err(); err != nil {
+		return ImportDetail{}, fmt.Errorf("iterate undo import effects: %w", err)
+	}
+	for _, effect := range undoEffects {
 		switch {
-		case effectType == "insert" && entityType == "item":
-			if _, err := tx.ExecContext(ctx, `DELETE FROM items WHERE id = $1`, entityID); err != nil {
+		case effect.effectType == "insert" && effect.entityType == "reservation":
+			if _, err := tx.ExecContext(ctx, `DELETE FROM reservations WHERE id = $1`, effect.entityID); err != nil {
+				return ImportDetail{}, fmt.Errorf("undo imported reservation insert: %w", err)
+			}
+		case effect.effectType == "insert" && effect.entityType == "item":
+			if _, err := tx.ExecContext(ctx, `DELETE FROM items WHERE id = $1`, effect.entityID); err != nil {
 				return ImportDetail{}, fmt.Errorf("undo imported item insert: %w", err)
 			}
-		case effectType == "insert" && entityType == "alias":
-			if _, err := tx.ExecContext(ctx, `DELETE FROM supplier_item_aliases WHERE id = $1`, entityID); err != nil {
+		case effect.effectType == "insert" && effect.entityType == "alias":
+			if _, err := tx.ExecContext(ctx, `DELETE FROM supplier_item_aliases WHERE id = $1`, effect.entityID); err != nil {
 				return ImportDetail{}, fmt.Errorf("undo imported alias insert: %w", err)
 			}
-		case effectType == "update" && beforeState != "":
+		case effect.effectType == "update" && effect.before != "":
 			var payload map[string]any
-			if err := json.Unmarshal([]byte(beforeState), &payload); err != nil {
+			if err := json.Unmarshal([]byte(effect.before), &payload); err != nil {
 				return ImportDetail{}, fmt.Errorf("decode undo import state: %w", err)
 			}
-			if entityType == "item" {
+			if effect.entityType == "item" {
 				if _, err := tx.ExecContext(ctx, `
 					UPDATE items
 					SET description = $2,
@@ -1580,10 +1599,12 @@ func (r *Repository) UndoImport(ctx context.Context, id, actor string) (ImportDe
 					    note = $6,
 					    updated_at = NOW()
 					WHERE id = $1
-				`, entityID, stringValue(payload["description"]), stringValue(payload["manufacturer_key"]), stringValue(payload["category_key"]), stringValue(payload["default_supplier_id"]), stringValue(payload["note"])); err != nil {
+				`, effect.entityID, stringValue(payload["description"]), stringValue(payload["manufacturer_key"]), stringValue(payload["category_key"]), stringValue(payload["default_supplier_id"]), stringValue(payload["note"])); err != nil {
 					return ImportDetail{}, fmt.Errorf("restore imported item: %w", err)
 				}
 			}
+		default:
+			return ImportDetail{}, fmt.Errorf("unsupported undo effect: %s/%s", effect.entityType, effect.effectType)
 		}
 	}
 
@@ -1871,7 +1892,7 @@ func convertIncomingAllocationsOnReceiptTx(ctx context.Context, tx *sql.Tx, purc
 				    source_type = 'stock',
 				    purchase_order_line_id = NULL,
 				    allocated_at = NOW(),
-				    note = TRIM(BOTH ' ' FROM CONCAT(note, ' converted from incoming order on receipt ', $3))
+				    note = TRIM(BOTH ' ' FROM CONCAT(note, ' converted from incoming order on receipt ', $3::text))
 				WHERE id = $1
 			`, allocation.ID, locationCode, receiptID); err != nil {
 				return fmt.Errorf("convert incoming allocation to stock: %w", err)

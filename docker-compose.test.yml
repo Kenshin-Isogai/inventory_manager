@@ -1,0 +1,18 @@
+services:
+  test-db:
+    image: postgres:17
+    container_name: inventory-manager-test-db
+    restart: "no"
+    environment:
+      POSTGRES_DB: inventory_manager_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d inventory_manager_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+    tmpfs:
+      - /var/lib/postgresql/data  # RAM-backed for speed

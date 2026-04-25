@@ -136,6 +136,9 @@ func NewRouter(cfg config.Config, logger *slog.Logger, authService *auth.Service
 	mux.HandleFunc("POST /api/v1/inventory/operations/{operation}/import", handlers.InventoryOperationImportApply)
 	mux.HandleFunc("GET /api/v1/admin/master-data/items/suggest", handlers.ItemSuggest)
 	mux.HandleFunc("GET /api/v1/admin/master-data/categories/suggest", handlers.CategorySuggest)
+	if cfg.App.Env == "test" || cfg.App.Mode == "test" {
+		mux.HandleFunc("POST /api/v1/test/reset", handlers.ResetTestData)
+	}
 
 	var handler http.Handler = mux
 	if authService != nil {

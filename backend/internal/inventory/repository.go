@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"backend/internal/testseed"
 )
 
 type Repository struct {
@@ -19,6 +21,10 @@ type Repository struct {
 
 func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
+}
+
+func (r *Repository) ResetTestData(ctx context.Context) error {
+	return testseed.ResetDatabase(ctx, r.db)
 }
 
 func (r *Repository) Dashboard(ctx context.Context) (DashboardData, error) {
