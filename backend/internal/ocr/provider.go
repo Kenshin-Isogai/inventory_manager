@@ -159,7 +159,8 @@ Rules:
 - Keep unknown strings empty.
 - quantity must be a positive integer.
 - lead_time_days must be a non-negative integer.
-- Extract line items from the document.`
+- Extract line items from the document.
+- When a lead time is provided as a range, please use the maximum number of days.`
 
 	contents := []*genai.Content{
 		{

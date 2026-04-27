@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useSWRConfig } from 'swr'
 import { Loader2 } from 'lucide-react'
 
@@ -49,6 +49,7 @@ const NEW_CATEGORY_VALUE = '__new_category__'
 
 export function OCRQueuePage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { mutate } = useSWRConfig()
   const { data: session, isLoading: sessionLoading } = useAuthSession()
   const [filterMyJobs, setFilterMyJobs] = useState(true)
@@ -62,7 +63,15 @@ export function OCRQueuePage() {
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const jobRows = jobs?.rows ?? []
 
-  const [selectedIDOverride, setSelectedIDOverride] = useState('')
+  const [selectedIDOverride, setSelectedIDOverride] = useState(searchParams.get('jobId') || '')
+  
+  useEffect(() => {
+    const jobId = searchParams.get('jobId')
+    if (jobId) {
+      setSelectedIDOverride(jobId)
+    }
+  }, [searchParams])
+
   const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null)
   const [uploadingJob, setUploadingJob] = useState(false)
   const selectedID =
@@ -958,7 +967,7 @@ export function OCRQueuePage() {
                 disabled={creatingDraft || (!detail.procurementRequestId && !canCreateDraft)}
               >
                 {creatingDraft && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {creatingDraft ? 'Creating...' : detail.procurementRequestId ? 'Open Procurement Draft' : 'Create Procurement Draft'}
+                {creatingDraft ? 'Creating...' : detail.procurementRequestId ? 'Open Procurement Draft' : 'Continue to Request (Draft)'}
               </Button>
             </div>
           </div>

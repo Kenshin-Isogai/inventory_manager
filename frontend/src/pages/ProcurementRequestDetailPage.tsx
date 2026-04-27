@@ -5,6 +5,9 @@ import { useSWRConfig } from 'swr'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 import { useProcurementRequestDetail } from '@/hooks/useProcurementRequestDetail'
@@ -13,6 +16,7 @@ import {
   submitProcurementRequest,
   reconcileProcurementRequest,
   sendMockProcurementWebhook,
+  uploadOCRJob,
 } from '@/lib/mockApi'
 
 export function ProcurementRequestDetailPage() {
@@ -25,6 +29,9 @@ export function ProcurementRequestDetailPage() {
   const [submitting, setSubmitting] = useState(false)
   const [reconciling, setReconciling] = useState(false)
   const [sendingWebhook, setSendingWebhook] = useState(false)
+  const [replaceDialogOpen, setReplaceDialogOpen] = useState(false)
+  const [replaceFile, setReplaceFile] = useState<File | null>(null)
+  const [replacing, setReplacing] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
@@ -65,6 +72,34 @@ export function ProcurementRequestDetailPage() {
       setError(err instanceof Error ? err.message : 'Failed to reconcile procurement request')
     } finally {
       setReconciling(false)
+    }
+  }
+
+  function handleReplaceDialogOpenChange(open: boolean) {
+    setReplaceDialogOpen(open)
+    if (!open) {
+      setReplaceFile(null)
+    }
+  }
+
+  async function handleReplaceQuote() {
+    if (!replaceFile) return
+    setError('')
+    setMessage('')
+    setReplacing(true)
+    try {
+      const result = await uploadOCRJob(replaceFile)
+      handleReplaceDialogOpenChange(false)
+      const nextID = (result as { data?: { id?: string } } | undefined)?.data?.id
+      if (nextID) {
+        navigate(`/app/procurement/ocr-queue?jobId=${nextID}`)
+      } else {
+        navigate('/app/procurement/ocr-queue')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to upload new quote')
+    } finally {
+      setReplacing(false)
     }
   }
 
@@ -174,6 +209,36 @@ export function ProcurementRequestDetailPage() {
         >
           {reconciling ? 'Reconciling...' : 'Reconcile'}
         </Button>
+
+        <Dialog open={replaceDialogOpen} onOpenChange={handleReplaceDialogOpenChange}>
+          <DialogTrigger asChild>
+            <Button variant="secondary" disabled={detail.dispatchStatus === 'submitted'}>
+              Replace Quote (OCR)
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Replace Quotation</DialogTitle>
+              <DialogDescription>
+                Upload a new quotation file. This will start a new OCR job and navigate you to the OCR Queue to review the results.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="quote-file">Quotation PDF or Image</Label>
+                <Input
+                  id="quote-file"
+                  type="file"
+                  accept=".pdf,image/*"
+                  onChange={(e) => setReplaceFile(e.target.files?.[0] || null)}
+                />
+              </div>
+              <Button onClick={handleReplaceQuote} disabled={!replaceFile || replacing} className="w-full">
+                {replacing ? 'Uploading...' : 'Upload & Process OCR'}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <Card>
