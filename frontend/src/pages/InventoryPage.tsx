@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { multiWordMatch } from '@/lib/search'
 import { useInventoryItems } from '@/hooks/useInventoryItems'
 import { useInventoryOverview } from '@/hooks/useInventoryOverview'
 
@@ -42,14 +43,14 @@ export function InventoryPage() {
   }, [balances])
 
   const filteredItems = items.filter((row) => {
-    const term = searchTerm.trim().toLowerCase()
     const itemLocations = locationBalancesByItem.get(row.itemId) ?? []
-    const matchesSearch = !term ||
-      row.itemNumber.toLowerCase().includes(term) ||
-      row.description.toLowerCase().includes(term) ||
-      row.manufacturer.toLowerCase().includes(term) ||
-      row.category.toLowerCase().includes(term) ||
-      itemLocations.some((balance) => balance.locationCode.toLowerCase().includes(term))
+    const matchesSearch = multiWordMatch(searchTerm, [
+      row.itemNumber,
+      row.description,
+      row.manufacturer,
+      row.category,
+      ...itemLocations.map((balance) => balance.locationCode),
+    ])
     const matchesManufacturer = manufacturerFilter === ALL || row.manufacturer === manufacturerFilter
     const matchesLocation = locationFilter === ALL || itemLocations.some((balance) => balance.locationCode === locationFilter)
     return matchesSearch && matchesManufacturer && matchesLocation

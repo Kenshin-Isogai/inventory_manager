@@ -15,6 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useInventoryLocations } from '@/hooks/useInventoryLocations'
 import { useInventoryOverview } from '@/hooks/useInventoryOverview'
 import { upsertLocation } from '@/lib/mockApi'
+import { multiWordMatch } from '@/lib/search'
 import type { LocationSummary, LocationUpsertInput } from '@/types'
 
 const ALL = '__all__'
@@ -56,17 +57,13 @@ export function InventoryLocationsPage() {
   )
 
   const filteredLocations = locations.filter((row) => {
-    const term = searchTerm.trim().toLowerCase()
     const items = balancesByLocation.get(row.code) ?? []
-    const matchesSearch = !term ||
-      row.code.toLowerCase().includes(term) ||
-      row.name.toLowerCase().includes(term) ||
-      row.locationType.toLowerCase().includes(term) ||
-      items.some((item) =>
-        item.itemNumber.toLowerCase().includes(term) ||
-        item.description.toLowerCase().includes(term) ||
-        item.manufacturer.toLowerCase().includes(term),
-      )
+    const matchesSearch = multiWordMatch(searchTerm, [
+      row.code,
+      row.name,
+      row.locationType,
+      ...items.flatMap((item) => [item.itemNumber, item.description, item.manufacturer]),
+    ])
     const matchesStatus = statusFilter === ALL || (statusFilter === 'active' ? row.isActive : !row.isActive)
     return matchesSearch && matchesStatus
   })

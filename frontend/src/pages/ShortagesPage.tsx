@@ -21,6 +21,7 @@ import { DeviceScopeFilters } from '@/components/context/DeviceScopeFilters'
 import { ItemInfoPopover } from '@/components/ItemInfoPopover'
 import { CollapsibleFilterBar } from '@/components/CollapsibleFilterBar'
 import { exportShortagesCSV } from '@/lib/mockApi'
+import { multiWordMatch } from '@/lib/search'
 import { Download, ChevronRight, Layers, Package, Box, MapPin, ClipboardList, Info } from 'lucide-react'
 
 function getStatusBadgeVariant(status: string) {
@@ -93,12 +94,7 @@ export function ShortagesPage() {
     }
 
     if (!search) return true
-    const q = search.toLowerCase()
-    return (
-      row.itemNumber.toLowerCase().includes(q) ||
-      row.manufacturer.toLowerCase().includes(q) ||
-      row.description.toLowerCase().includes(q)
-    )
+    return multiWordMatch(search, [row.itemNumber, row.manufacturer, row.description])
   })
 
   function updateContext(key: 'device' | 'scope' | 'system', value: string) {

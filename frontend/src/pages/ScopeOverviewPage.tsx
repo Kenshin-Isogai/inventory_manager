@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { CollapsibleFilterBar } from '../components/CollapsibleFilterBar'
 import { useScopeOverview } from '../hooks/useScopeOverview'
 import { useDevices } from '../hooks/useDevices'
+import { multiWordMatch } from '../lib/search'
 import type { ScopeOverviewRow } from '../types'
 
 function buildTree(rows: ScopeOverviewRow[]): (ScopeOverviewRow & { children: ScopeOverviewRow[]; depth: number })[] {
@@ -47,11 +48,7 @@ export function ScopeOverviewPage() {
   const tree = useMemo(() => {
     if (!data?.rows) return []
     const filtered = search
-      ? data.rows.filter(
-          (r) =>
-            r.scopeKey.toLowerCase().includes(search.toLowerCase()) ||
-            r.scopeName.toLowerCase().includes(search.toLowerCase()),
-        )
+      ? data.rows.filter((r) => multiWordMatch(search, [r.scopeKey, r.scopeName]))
       : data.rows
     return buildTree(filtered)
   }, [data, search])

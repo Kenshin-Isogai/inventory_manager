@@ -19,6 +19,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useAuthSession } from '@/hooks/useAuthSession'
 import { useDeviceScopes } from '@/hooks/useDeviceScopes'
 import { useInventoryOverview } from '@/hooks/useInventoryOverview'
+import { multiWordMatch } from '@/lib/search'
 import { useReservations } from '@/hooks/useReservations'
 import { applyAllocationsImport, applyReservationsImport, exportReservationsCSV, previewAllocationsImport, previewReservationsImport } from '@/lib/additionalApi'
 import { resolveActorId } from '@/lib/auth'
@@ -103,8 +104,7 @@ export function ReservationsPage() {
       if (matchedScope?.systemKey !== system) return false
     }
     if (!search) return true
-    const q = search.toLowerCase()
-    return row.itemNumber.toLowerCase().includes(q) || row.description.toLowerCase().includes(q) || row.id.toLowerCase().includes(q)
+    return multiWordMatch(search, [row.itemNumber, row.description, row.id])
   })
 
   function updateContext(key: 'device' | 'scope' | 'system', value: string) {

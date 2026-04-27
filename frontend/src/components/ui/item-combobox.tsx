@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
+import { multiWordMatch } from '@/lib/search'
 
 export type ItemComboboxOption = {
   itemId: string
@@ -40,14 +41,10 @@ export function ItemCombobox({
   const selectedItem = items.find((item) => item.itemId === value)
 
   const filteredItems = useMemo(() => {
-    const normalized = query.trim().toLowerCase()
-    if (!normalized) return items.slice(0, 50)
+    if (!query.trim()) return items.slice(0, 50)
     return items
       .filter((item) =>
-        [item.itemNumber, item.description, item.manufacturer ?? '', item.category ?? '']
-          .join(' ')
-          .toLowerCase()
-          .includes(normalized),
+        multiWordMatch(query, [item.itemNumber, item.description, item.manufacturer ?? '', item.category ?? '']),
       )
       .slice(0, 50)
   }, [items, query])
