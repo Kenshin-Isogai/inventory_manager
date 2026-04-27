@@ -19,31 +19,61 @@
 ## 2. 全体構成
 
 ```mermaid
-graph TB
-    subgraph ユーザー
-        Dev["開発部<br/>(Operator / Inventory)"]
-        Inspector["検収担当<br/>(Inspector)"]
-    end
+flowchart LR
+    %% アクター（ユーザーとその役割）
+    U1("👤 上長<br>・発注/検収/支払申請<br>・承認")
+    U2("👤 開発部<br>・購買申請<br>・在庫状況確認<br>・購買進捗確認")
+    U3("👤 管理部<br>・購買進捗管理<br>・購買内容修正<br>・発注処理<br>・支払い処理")
+    U4("👤 管理部<br>・会計")
 
-    subgraph 本システム
-        FE["フロントエンド<br/>(React SPA)"]
-        BE["バックエンド<br/>(Go API)"]
-        DB[(PostgreSQL)]
-    end
+    %% システム・データベース群
+    S1["バクラク"]
+    S2["webサーバー<br>(システム連携用)"]
+    S3["独自GUI"]
+    S4["楽楽販売"]
+    S5["マネーフォワード"]
 
-    subgraph 外部システム
-        Raku["楽楽販売"]
-        Baku["バクラク"]
-        Cloud["クラウドストレージ"]
-    end
+    C1(["証憑保存用クラウド"])
+    D1[("キャッシュ")]
+    D2[("在庫DB")]
 
-    Dev --> FE
-    Inspector --> FE
-    FE <--> BE
-    BE <--> DB
-    BE <--> Raku
-    BE <--> Baku
-    BE --> Cloud
+    %% ユーザーとシステムの関係性（点線）
+    U1 -.-> S1
+    U2 -.-> S3
+    U3 -.-> S4
+    U4 -.-> S5
+
+    %% システム間のデータフロー
+    S1 -- "申請作成・ファイルアップロード<br>申請状況確認" --> S2
+    S2 -- "申請状況" --> S1
+
+    S2 <-->|"連携データの管理"| D1
+    S2 -- "証憑保存" --> C1
+
+    S3 -- "webhook<br>購買申請" --> S2
+    S2 -- "更新" --> D2
+
+    S2 -- "レコード作成・更新<br>申請作成" --> S4
+    S4 -- "データ変換<br>レコード登録・更新<br>バクラク申請<br>申請状況ポーリング" --> S2
+
+    S3 -- "参照" --> S4
+    S4 -- "レスポンス" --> S3
+
+    S4 -- "発注処理<br>内容修正" --> S4
+    S4 -- "csv出力" --> S5
+
+    %% 元の図に合わせた配色のスタイリング
+    style S1 fill:#d9ead3,stroke:#93c47d,stroke-width:2px
+    style S2 fill:#f3f3f3,stroke:#b7b7b7,stroke-width:2px
+    style S3 fill:#fff2cc,stroke:#ffd966,stroke-width:2px
+    style S4 fill:#fce5cd,stroke:#e06666,stroke-width:2px
+    style S5 fill:#c9daf8,stroke:#6d9eeb,stroke-width:2px
+
+    %% アクターの背景を透明にしてテキストのみ表示
+    style U1 fill:transparent,stroke:none
+    style U2 fill:transparent,stroke:none
+    style U3 fill:transparent,stroke:none
+    style U4 fill:transparent,stroke:none
 ```
 
 ---

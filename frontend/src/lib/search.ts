@@ -15,7 +15,7 @@ export function tokenize(input: string): string[] {
   return input
     .trim()
     .toLowerCase()
-    .split(/[\s　]+/)
+    .split(/[\s\u3000]+/)
     .filter(Boolean)
 }
 
