@@ -49,7 +49,7 @@ const NEW_CATEGORY_VALUE = '__new_category__'
 
 export function OCRQueuePage() {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { mutate } = useSWRConfig()
   const { data: session, isLoading: sessionLoading } = useAuthSession()
   const [filterMyJobs, setFilterMyJobs] = useState(true)
@@ -62,21 +62,16 @@ export function OCRQueuePage() {
   const { data: budgetCategories } = useProcurementBudgetCategories(undefined, sessionReady)
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const jobRows = jobs?.rows ?? []
+  const selectedIDFromSearch = searchParams.get('jobId') || ''
 
-  const [selectedIDOverride, setSelectedIDOverride] = useState(searchParams.get('jobId') || '')
-  
-  useEffect(() => {
-    const jobId = searchParams.get('jobId')
-    if (jobId) {
-      setSelectedIDOverride(jobId)
-    }
-  }, [searchParams])
+  const [selectedIDOverride, setSelectedIDOverride] = useState('')
 
   const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null)
   const [uploadingJob, setUploadingJob] = useState(false)
+  const selectedIDCandidate = selectedIDFromSearch || selectedIDOverride
   const selectedID =
-    selectedIDOverride && jobRows.some((job) => job.id === selectedIDOverride)
-      ? selectedIDOverride
+    selectedIDCandidate && jobRows.some((job) => job.id === selectedIDCandidate)
+      ? selectedIDCandidate
       : jobRows[0]?.id || ''
   const { data: detail } = useOCRJobDetail(selectedID, sessionReady)
   const supplierMatches = detail?.supplierMatch ?? []
@@ -142,6 +137,15 @@ export function OCRQueuePage() {
     }
   }
 
+  function setSelectedID(nextID: string) {
+    if (searchParams.has('jobId')) {
+      const nextSearchParams = new URLSearchParams(searchParams)
+      nextSearchParams.delete('jobId')
+      setSearchParams(nextSearchParams, { replace: true })
+    }
+    setSelectedIDOverride(nextID)
+  }
+
   async function handleStartOCR() {
     if (!pendingUploadFile) {
       return
@@ -154,7 +158,7 @@ export function OCRQueuePage() {
       await revalidateOCRJobs()
       const nextID = (result as { data?: { id?: string } } | undefined)?.data?.id
       if (nextID) {
-        setSelectedIDOverride(nextID)
+        setSelectedID(nextID)
       }
       clearPendingUpload()
     } catch (error) {
@@ -305,7 +309,7 @@ export function OCRQueuePage() {
     try {
       await deleteOCRJob(jobId)
       if (selectedID === jobId) {
-        setSelectedIDOverride('')
+        setSelectedID('')
       }
       await revalidateOCRJobs()
     } catch (error) {
@@ -468,7 +472,7 @@ export function OCRQueuePage() {
                   {jobRows.length ? jobRows.map((job) => (
                       <TableRow
                         key={job.id}
-                        onClick={() => setSelectedIDOverride(job.id)}
+                        onClick={() => setSelectedID(job.id)}
                         className={`cursor-pointer ${selectedID === job.id ? 'bg-muted' : ''}`}
                       >
                       <TableCell className="font-medium">{job.fileName}</TableCell>
