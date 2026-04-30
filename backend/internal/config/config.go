@@ -63,6 +63,10 @@ type AuthConfig struct {
 
 type IntegrationConfig struct {
 	ProcurementWebhookSecret string
+	RakurakuViewAPIURL       string
+	RakurakuAPIToken         string
+	RakurakuResponseType     string
+	RakurakuProcurementDBID  string
 }
 
 type LoggingConfig struct {
@@ -119,6 +123,10 @@ func Load() (Config, error) {
 		},
 		Integration: IntegrationConfig{
 			ProcurementWebhookSecret: getEnv("PROCUREMENT_WEBHOOK_SECRET", ""),
+			RakurakuViewAPIURL:       getEnv("RAKURAKU_VIEW_API_URL", ""),
+			RakurakuAPIToken:         getEnv("RAKURAKU_API_TOKEN", ""),
+			RakurakuResponseType:     getEnv("RAKURAKU_RESPONSE_TYPE", "1"),
+			RakurakuProcurementDBID:  getEnv("RAKURAKU_PROCUREMENT_DB_SCHEMA_ID", ""),
 		},
 		Logging: LoggingConfig{
 			Level: getEnv("LOG_LEVEL", "info"),

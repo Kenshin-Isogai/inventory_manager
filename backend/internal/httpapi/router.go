@@ -105,6 +105,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, authService *auth.Service
 	mux.HandleFunc("POST /api/v1/procurement/requests/{id}/submit", handlers.SubmitProcurementRequest)
 	mux.HandleFunc("POST /api/v1/procurement/requests/{id}/reconcile", handlers.ReconcileProcurementRequest)
 	mux.HandleFunc("POST /api/v1/procurement/webhooks/external", handlers.ProcurementWebhook)
+	mux.HandleFunc("POST /api/v1/procurement/webhooks/pubsub", handlers.ProcurementWebhook)
 	mux.HandleFunc("GET /api/v1/procurement/ocr-jobs", handlers.OCRJobList)
 	mux.HandleFunc("POST /api/v1/procurement/ocr-jobs", handlers.CreateOCRJob)
 	mux.HandleFunc("GET /api/v1/procurement/ocr-jobs/{id}", handlers.OCRJobDetail)

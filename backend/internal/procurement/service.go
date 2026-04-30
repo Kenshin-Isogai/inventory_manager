@@ -355,6 +355,9 @@ func (s *Service) processWebhookEvent(ctx context.Context, event WebhookEvent) (
 		result, err := s.syncAdapter.FetchProcurementReconciliation(ctx, ReconciliationInput{
 			BatchID:                  requestID,
 			ExternalRequestReference: current.ExternalRequestReference,
+			DBSchemaID:               event.DBSchemaID,
+			KeyID:                    event.KeyID,
+			ResponseType:             event.ResponseType,
 			CurrentNormalizedStatus:  current.NormalizedStatus,
 			QuantityProgression:      current.QuantityProgression,
 			Trigger:                  "webhook",

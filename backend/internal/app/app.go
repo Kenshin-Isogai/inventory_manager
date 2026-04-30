@@ -22,10 +22,10 @@ import (
 )
 
 type App struct {
-	cfg       config.Config
-	logger    *slog.Logger
-	server    *http.Server
-	db        *sql.DB
+	cfg        config.Config
+	logger     *slog.Logger
+	server     *http.Server
+	db         *sql.DB
 	ocrService *ocr.Service
 }
 
@@ -53,7 +53,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		procurement.NewRepository(db),
 		store,
 		procurement.NewMockDispatcher(),
-		procurement.NewMockSyncAdapter(cfg.Integration.ProcurementWebhookSecret),
+		buildProcurementSyncAdapter(cfg),
 	)
 	ocrProvider, err := buildOCRProvider(cfg)
 	if err != nil {
@@ -78,6 +78,20 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		db:         db,
 		ocrService: phaseThreeService,
 	}, nil
+}
+
+func buildProcurementSyncAdapter(cfg config.Config) procurement.SyncAdapter {
+	if strings.TrimSpace(cfg.Integration.RakurakuViewAPIURL) != "" {
+		return procurement.NewRakurakuSyncAdapter(procurement.RakurakuSyncAdapterConfig{
+			WebhookSecret:     cfg.Integration.ProcurementWebhookSecret,
+			ViewAPIURL:        cfg.Integration.RakurakuViewAPIURL,
+			APIToken:          cfg.Integration.RakurakuAPIToken,
+			ResponseType:      cfg.Integration.RakurakuResponseType,
+			DefaultDBSchemaID: cfg.Integration.RakurakuProcurementDBID,
+			RequestTimeout:    cfg.HTTP.WriteTimeout,
+		})
+	}
+	return procurement.NewMockSyncAdapter(cfg.Integration.ProcurementWebhookSecret)
 }
 
 func buildOCRProvider(cfg config.Config) (ocr.Provider, error) {
